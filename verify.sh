@@ -48,7 +48,18 @@ check_docker_services() {
     fi
     
     # Get list of expected services
-    local services=("kafka" "ev-central" "ev-cp-e-1" "ev-cp-e-2" "ev-cp-m-1" "ev-cp-m-2" "ev-driver")
+    local services=(
+        "kafka"
+        "ev-central"
+        "ev-cp-e-1"
+        "ev-cp-e-2"
+        "ev-cp-e-3"
+        "ev-cp-m-1"
+        "ev-cp-m-2"
+        "ev-cp-m-3"
+        "ev-driver"
+        "ev-driver-2"
+    )
     
     for service in "${services[@]}"; do
         if docker compose ps | grep -q "$service.*Up"; then
@@ -150,7 +161,7 @@ check_service_health() {
 check_logs() {
     print_header "Checking Logs for Errors"
     
-    local services=("ev-central" "ev-cp-e-1" "ev-cp-e-2")
+    local services=("ev-central" "ev-cp-e-1" "ev-cp-e-2" "ev-cp-e-3")
     
     for service in "${services[@]}"; do
         if docker compose ps | grep -q "$service.*Up"; then

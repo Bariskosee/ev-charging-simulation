@@ -198,7 +198,7 @@ hostname -I
 export KAFKA_BOOTSTRAP=<machine1-ip>:9092
 
 # Run charging points
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for detailed lab instructions.

@@ -254,7 +254,7 @@ hostname -I  # Note this IP
 ```bash
 cd ..
 export KAFKA_BOOTSTRAP=<machine1-ip>:9092
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 ### Scenario 3: Remote Kafka

@@ -158,15 +158,20 @@ deploy_lab() {
             ;;
         2)
             print_info "Deploying Charging Points only..."
-            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d \
+                ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 \
+                ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
             ;;
         3)
             print_info "Deploying Driver only..."
-            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d ev-driver
+            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d ev-driver ev-driver-2
             ;;
         4)
             print_info "Deploying Central and Charging Points..."
-            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d ev-central ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+            KAFKA_BOOTSTRAP=$kafka_addr docker compose up -d \
+                ev-central \
+                ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 \
+                ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
             ;;
         *)
             print_error "Invalid choice"

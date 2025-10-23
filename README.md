@@ -395,7 +395,7 @@ docker compose up -d kafka ev-central
 **Machine B** (Charging Points):
 ```bash
 export KAFKA_BOOTSTRAP=<machine-a-ip>:9092
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 #### 4. Interactive Deployment

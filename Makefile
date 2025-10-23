@@ -63,17 +63,17 @@ lab-deploy:
 	@echo "Lab deployment mode"
 	@echo "Select components to deploy:"
 	@echo "  1) Central only"
-	@echo "  2) Charging Points only"  
-	@echo "  3) Driver only"
-	@echo "  4) Central + Charging Points"
-	@read -p "Enter choice [1-4]: " choice; \
-	case $$choice in \
-		1) docker compose up -d ev-central ;; \
-		2) docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2 ;; \
-		3) docker compose up -d ev-driver ;; \
-		4) docker compose up -d ev-central ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2 ;; \
-		*) echo "Invalid choice" ;; \
-	esac
+        @echo "  2) Charging Points only"
+        @echo "  3) Driver only"
+        @echo "  4) Central + Charging Points"
+        @read -p "Enter choice [1-4]: " choice; \
+        case $$choice in \
+                1) docker compose up -d ev-central ;; \
+                2) docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3 ;; \
+                3) docker compose up -d ev-driver ev-driver-2 ;; \
+                4) docker compose up -d ev-central ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3 ;; \
+                *) echo "Invalid choice" ;; \
+        esac
 
 down:
 	@echo "Stopping all services..."
@@ -117,9 +117,13 @@ local-run:
 	python -m evcharging.apps.ev_central.main &
 	sleep 2
 	python -m evcharging.apps.ev_cp_e.main --cp-id CP-001 --health-port 8001 &
-	python -m evcharging.apps.ev_cp_e.main --cp-id CP-002 --health-port 8002 &
-	sleep 2
-	python -m evcharging.apps.ev_cp_m.main --cp-id CP-001 --cp-e-port 8001 &
-	python -m evcharging.apps.ev_cp_m.main --cp-id CP-002 --cp-e-port 8002 &
-	sleep 2
-	python -m evcharging.apps.ev_driver.main --driver-id driver-alice --requests-file requests.txt
+        python -m evcharging.apps.ev_cp_e.main --cp-id CP-002 --health-port 8002 &
+        python -m evcharging.apps.ev_cp_e.main --cp-id CP-003 --health-port 8003 &
+        sleep 2
+        python -m evcharging.apps.ev_cp_m.main --cp-id CP-001 --cp-e-port 8001 &
+        python -m evcharging.apps.ev_cp_m.main --cp-id CP-002 --cp-e-port 8002 &
+        python -m evcharging.apps.ev_cp_m.main --cp-id CP-003 --cp-e-port 8003 &
+        sleep 2
+        python -m evcharging.apps.ev_driver.main --driver-id driver-alice --requests-file requests.txt &
+        python -m evcharging.apps.ev_driver.main --driver-id driver-bob --requests-file requests.txt &
+        wait

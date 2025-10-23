@@ -93,6 +93,26 @@ services:
       - evcharging-network
     restart: unless-stopped
 
+  # Charging Point Engine 3
+  ev-cp-e-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cp_e
+    container_name: ev-cp-e-3
+    environment:
+      CP_ENGINE_KAFKA_BOOTSTRAP: kafka:9092
+      CP_ENGINE_CP_ID: CP-003
+      CP_ENGINE_HEALTH_PORT: 8001
+      CP_ENGINE_LOG_LEVEL: INFO
+      CP_ENGINE_KW_RATE: 11.0
+      CP_ENGINE_EURO_RATE: 0.28
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - evcharging-network
+    restart: unless-stopped
+
   # Charging Point Monitor 1
   ev-cp-m-1:
     build:
@@ -135,6 +155,27 @@ services:
       - evcharging-network
     restart: unless-stopped
 
+  # Charging Point Monitor 3
+  ev-cp-m-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cp_m
+    container_name: ev-cp-m-3
+    environment:
+      CP_MONITOR_CP_ID: CP-003
+      CP_MONITOR_CP_E_HOST: ev-cp-e-3
+      CP_MONITOR_CP_E_PORT: 8001
+      CP_MONITOR_CENTRAL_HOST: ev-central
+      CP_MONITOR_CENTRAL_PORT: 8000
+      CP_MONITOR_HEALTH_INTERVAL: 1.0
+      CP_MONITOR_LOG_LEVEL: INFO
+    depends_on:
+      - ev-central
+      - ev-cp-e-3
+    networks:
+      - evcharging-network
+    restart: unless-stopped
+
   # EV Driver Client
   ev-driver:
     build:
@@ -145,6 +186,28 @@ services:
       DRIVER_DRIVER_ID: driver-alice
       DRIVER_KAFKA_BOOTSTRAP: kafka:9092
       DRIVER_REQUEST_INTERVAL: 4.0
+      DRIVER_LOG_LEVEL: INFO
+    volumes:
+      - ../requests.txt:/app/requests.txt:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      ev-central:
+        condition: service_started
+    networks:
+      - evcharging-network
+
+  # EV Driver Client (secondary)
+  ev-driver-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.driver
+    container_name: ev-driver-2
+    environment:
+      DRIVER_DRIVER_ID: driver-bob
+      DRIVER_KAFKA_BOOTSTRAP: kafka:9092
+      DRIVER_REQUEST_INTERVAL: 5.0
+      DRIVER_REQUESTS_FILE: /app/requests.txt
       DRIVER_LOG_LEVEL: INFO
     volumes:
       - ../requests.txt:/app/requests.txt:ro

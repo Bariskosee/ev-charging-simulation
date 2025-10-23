@@ -112,7 +112,7 @@ export KAFKA_BOOTSTRAP=<machine1-ip>:9092
 export CENTRAL_HOST=<machine1-ip>
 
 # Deploy only charging points
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 #### Scenario B: All services use shared remote Kafka
@@ -131,14 +131,14 @@ docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-central
 ```bash
 export KAFKA_BOOTSTRAP=kafka.lab.local:9092
 export CENTRAL_HOST=<machine1-ip>
-docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 **Machine 3 (Driver)**:
 
 ```bash
 export KAFKA_BOOTSTRAP=kafka.lab.local:9092
-docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver
+docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver ev-driver-2
 ```
 
 ---
@@ -348,7 +348,7 @@ CENTRAL_HOST=192.168.1.10
 EOF
 
 # Start charging points
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 
 # Verify
 docker compose ps
@@ -367,7 +367,7 @@ KAFKA_BOOTSTRAP=192.168.1.10:9092
 EOF
 
 # Start driver
-docker compose up -d ev-driver
+docker compose up -d ev-driver ev-driver-2
 
 # Verify
 docker compose logs ev-driver

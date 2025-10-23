@@ -128,7 +128,7 @@ docker compose up -d kafka ev-central
 **Machine 2** (192.168.1.11):
 ```bash
 export KAFKA_BOOTSTRAP=192.168.1.10:9092
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 #### Scenario B: Shared Remote Kafka, Services Distributed
@@ -146,13 +146,13 @@ docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-central
 export KAFKA_BOOTSTRAP=kafka.lab.edu:9092
 export CENTRAL_HOST=<machine1-ip>
 docker compose -f docker/docker-compose.remote-kafka.yml up -d \
-  ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+  ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 **Machine 3** (Driver):
 ```bash
 export KAFKA_BOOTSTRAP=kafka.lab.edu:9092
-docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver
+docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver ev-driver-2
 ```
 
 **Requirements**:

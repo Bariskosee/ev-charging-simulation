@@ -14,6 +14,7 @@ The EV Charging Simulation system is now fully configured for deployment **witho
 - **Interactive script**: `./deploy.sh` with menu-driven options
 - **Make targets**: `make up`, `make remote-kafka`, `make lab-deploy`
 - **No manual compilation required**
+- **Service roster**: 10 services (Kafka, Central, 3×CP Engines, 3×CP Monitors, 2×Drivers) ready for grading stress tests
 
 ### ✅ Multiple Deployment Scenarios
 
@@ -84,7 +85,7 @@ cd ev-charging-simulation
 export KAFKA_BOOTSTRAP=192.168.1.10:9092
 
 # Start only charging point services
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 
 # Verify
 docker compose ps
@@ -133,14 +134,41 @@ docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-central
 export KAFKA_BOOTSTRAP=kafka.lab.edu:9092
 export CENTRAL_HOST=<machine1-ip>
 docker compose -f docker/docker-compose.remote-kafka.yml up -d \
-  ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+  ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 \
+  ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 **Machine 3** (Driver Client):
 ```bash
 export KAFKA_BOOTSTRAP=kafka.lab.edu:9092
-docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver
+docker compose -f docker/docker-compose.remote-kafka.yml up -d ev-driver ev-driver-2
 ```
+
+---
+
+## Hands-Off Classroom Demonstration
+
+To satisfy the grading requirement of launching the entire solution without additional interaction:
+
+1. **Start everything at once** (on a single node or orchestrating nodes with shared compose file):
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Observe the system** without touching it further:
+   ```bash
+   docker compose logs -f ev-central ev-driver ev-driver-2
+   ```
+   - Central logs show CP registrations and session orchestration.
+   - Both drivers emit charging requests against multiple CPs.
+
+3. **Optional projector view**: open the Central dashboard at `http://<central-host>:8000` to watch CP state changes and driver sessions unfold.
+
+4. **Health confirmation** (non-interactive once running):
+   ```bash
+   make verify
+   ```
+   The script checks all 10 services, Kafka topics, and HTTP/TCP endpoints without needing code changes or rebuilds.
 
 ---
 
@@ -175,10 +203,10 @@ Each service can be deployed separately:
 docker compose up -d ev-central
 
 # Just Charging Points
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 
 # Just Driver
-docker compose up -d ev-driver
+docker compose up -d ev-driver ev-driver-2
 
 # Just Kafka
 docker compose up -d kafka
@@ -355,7 +383,7 @@ docker compose -f docker/docker-compose.remote-kafka.yml up -d
 docker compose up -d ev-central
 
 # Charging Points only
-docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-m-1 ev-cp-m-2
+docker compose up -d ev-cp-e-1 ev-cp-e-2 ev-cp-e-3 ev-cp-m-1 ev-cp-m-2 ev-cp-m-3
 ```
 
 ### Check Status
