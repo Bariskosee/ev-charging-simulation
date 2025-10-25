@@ -7,13 +7,14 @@ services:
     container_name: ev-kafka
     ports:
       - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -49,6 +50,12 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -108,8 +115,10 @@ services:
       CP_MONITOR_HEALTH_INTERVAL: 1.0
       CP_MONITOR_LOG_LEVEL: INFO
     depends_on:
-      - ev-central
-      - ev-cp-e-1
+      ev-central:
+        condition: service_healthy
+      ev-cp-e-1:
+        condition: service_started
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -129,8 +138,10 @@ services:
       CP_MONITOR_HEALTH_INTERVAL: 1.0
       CP_MONITOR_LOG_LEVEL: INFO
     depends_on:
-      - ev-central
-      - ev-cp-e-2
+      ev-central:
+        condition: service_healthy
+      ev-cp-e-1:
+        condition: service_started
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -152,7 +163,7 @@ services:
       kafka:
         condition: service_healthy
       ev-central:
-        condition: service_started
+        condition: service_healthy
     networks:
       - evcharging-network
 

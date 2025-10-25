@@ -56,23 +56,32 @@ class CPMonitor:
         )
         
         central_url = f"http://{self.config.central_host}:{self.config.central_port}"
+        max_retries = 5
+        base_delay = 1
         
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{central_url}/cp/register",
-                    json=registration.model_dump(mode='json'),
-                    timeout=5.0
-                )
-                
-                if response.status_code == 200:
-                    logger.info(f"CP {self.cp_id} registered with Central successfully")
-                else:
-                    logger.error(f"Failed to register CP: {response.status_code} {response.text}")
-        
-        except Exception as e:
-            logger.error(f"Error registering with Central: {e}")
-    
+        for attempt in range(1, max_retries+1):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{central_url}/cp/register",
+                        json=registration.model_dump(mode='json'),
+                        timeout=5.0
+                    )
+                    
+                    if response.status_code == 200:
+                        logger.info(f"CP {self.cp_id} registered with Central successfully")
+                        return
+                    else:
+                        logger.error(f"Failed to register CP: {response.status_code} {response.text}\
+                                     for the {attempt} time")
+            
+            except Exception as e:
+                logger.error(f"Error registering with Central: {e}")
+
+            delay = min(base_delay * (2 ** (attempt - 1)), 60)
+            logger.info(f"Retrying registration in {delay:.1f}s...")
+            await asyncio.sleep(delay)
+
     async def notify_central_fault(self):
         """Notify Central that this CP has a fault."""
         try:

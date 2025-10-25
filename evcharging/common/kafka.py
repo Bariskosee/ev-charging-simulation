@@ -28,7 +28,7 @@ class KafkaProducerHelper:
             key_serializer=lambda k: k.encode('utf-8') if k else None,
         )
         await self.producer.start()
-        logger.info(f"Kafka producer started: {self.bootstrap_servers}")
+        #logger.info(f"Kafka producer started: {self.bootstrap_servers}")
     
     async def stop(self):
         """Stop the producer."""
@@ -77,7 +77,7 @@ class KafkaConsumerHelper:
             key_deserializer=lambda k: k.decode('utf-8') if k else None,
         )
         await self.consumer.start()
-        logger.info(f"Kafka consumer started: topics={self.topics}, group={self.group_id}")
+        #logger.info(f"Kafka consumer started: topics={self.topics}, group={self.group_id}")
     
     async def stop(self):
         """Stop the consumer."""
@@ -112,7 +112,7 @@ async def ensure_topics(bootstrap_servers: str, topics: list[str], num_partition
             for topic in topics
         ]
         await admin.create_topics(new_topics, validate_only=False)
-        logger.info(f"Created topics: {topics}")
+        #logger.info(f"Created topics: {topics}")
     except TopicAlreadyExistsError:
         logger.debug(f"Topics already exist: {topics}")
     except Exception as e:
