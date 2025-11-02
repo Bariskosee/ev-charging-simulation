@@ -80,7 +80,7 @@ services:
 networks:
   evcharging-network:
     external: true
-    name: ev-charging-simulation-1_evcharging-network
+    name: ev-charging-simulation-3_evcharging-network
 EOF
 
 echo "✅ Created override file: $OVERRIDE_FILE"
