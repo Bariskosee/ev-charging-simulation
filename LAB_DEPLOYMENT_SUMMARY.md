@@ -45,11 +45,11 @@
 
 | Sürücü ID      | Dashboard Port | İstek Aralığı | Davranış Profili      |
 |----------------|----------------|---------------|-----------------------|
-| driver-alice   | 8100           | 5.0 saniye    | Dengeli kullanım      |
-| driver-bob     | 8101           | 6.0 saniye    | Sakin kullanıcı       |
-| driver-charlie | 8102           | 7.0 saniye    | Ara sıra kullanım     |
-| driver-david   | 8103           | 8.0 saniye    | Hafta sonu kullanıcı  |
-| driver-eve     | 8104           | 4.5 saniye    | Yoğun kullanım (Taksi)|
+| driver-alice   | 8100           | 120 saniye    | Dengeli kullanım      |
+| driver-bob     | 8101           | 60 saniye     | Sakin kullanıcı       |
+| driver-charlie | 8102           | 30 saniye     | Ara sıra kullanım     |
+| driver-david   | 8103           | 15 saniye     | Hafta sonu kullanıcı  |
+| driver-eve     | 8104           | 10 saniye     | Yoğun kullanım (Taksi)|
 
 ---
 
