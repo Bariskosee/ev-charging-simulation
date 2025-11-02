@@ -66,50 +66,50 @@ services:
 networks:
   evcharging-network:
     external: true
-    name: ev-charging-simulation-1_evcharging-network
+    name: ev-charging-simulation_evcharging-network
 "@
 
 # Write compose file
 $ComposeContent | Out-File -FilePath $OverrideFile -Encoding UTF8
-Write-Host "✅ Created override file: $OverrideFile" -ForegroundColor Green
+Write-Host "Created override file: $OverrideFile" -ForegroundColor Green
 Write-Host ""
 
 # Start the service
-Write-Host "🚀 Starting Driver service..." -ForegroundColor Yellow
+Write-Host "Starting Driver service..." -ForegroundColor Yellow
 docker compose -f $OverrideFile up -d
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Failed to start Driver service" -ForegroundColor Red
+    Write-Host "Failed to start Driver service" -ForegroundColor Red
     exit 1
 }
 
 Write-Host ""
-Write-Host "⏳ Waiting for service to start (5 seconds)..." -ForegroundColor Yellow
+Write-Host "Waiting for service to start (5 seconds)..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
 # Verify
 Write-Host ""
-Write-Host "📊 Verification:" -ForegroundColor Cyan
+Write-Host "Verification:" -ForegroundColor Cyan
 
 $driverRunning = docker ps --filter "name=ev-driver-$DriverName" --format "{{.Names}}"
 if ($driverRunning) {
-    Write-Host "   ✅ Driver (ev-driver-$DriverName) is running" -ForegroundColor Green
+    Write-Host "   Driver (ev-driver-$DriverName) is running" -ForegroundColor Green
 } else {
-    Write-Host "   ❌ Driver failed to start" -ForegroundColor Red
+    Write-Host "   Driver failed to start" -ForegroundColor Red
 }
 
 Write-Host ""
-Write-Host "🌐 Access Driver Dashboard:" -ForegroundColor Cyan
+Write-Host "Access Driver Dashboard:" -ForegroundColor Cyan
 Write-Host "   http://localhost:$DashboardPort"
 Write-Host ""
-Write-Host "🔍 Check available CPs:" -ForegroundColor Cyan
+Write-Host "Check available CPs:" -ForegroundColor Cyan
 Write-Host "   curl http://localhost:$DashboardPort/charging-points | jq '.[0:3]'"
 Write-Host ""
-Write-Host "📝 View logs:" -ForegroundColor Cyan
+Write-Host "View logs:" -ForegroundColor Cyan
 Write-Host "   docker logs ev-driver-$DriverName"
 Write-Host ""
-Write-Host "🛑 To remove this driver:" -ForegroundColor Yellow
+Write-Host "To remove this driver:" -ForegroundColor Yellow
 Write-Host "   docker compose -f $OverrideFile down"
 Write-Host "   Remove-Item $OverrideFile"
 Write-Host ""
-Write-Host "✅ Driver $DriverId deployment complete!" -ForegroundColor Green
+Write-Host "Driver $DriverId deployment complete!" -ForegroundColor Green
