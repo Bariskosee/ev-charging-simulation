@@ -35,6 +35,7 @@ class CPEngineConfig(BaseSettings):
     telemetry_interval: float = Field(default=1.0, description="Telemetry emission interval (seconds)")
     kw_rate: float = Field(default=22.0, description="Power delivery rate in kW")
     euro_rate: float = Field(default=0.30, description="Cost per kWh in euros")
+    max_session_seconds: Optional[int] = Field(default=None, description="Maximum session duration in seconds (None = unlimited)")
     
     model_config = SettingsConfigDict(
         env_prefix="CP_ENGINE_",
@@ -73,6 +74,7 @@ class DriverConfig(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     dashboard_port: int = Field(default=8100, description="HTTP dashboard port")
     central_http_url: str = Field(default="http://localhost:8000", description="EV Central HTTP base URL")
+    auto_run_requests: bool = Field(default=False, description="Automatically run scripted requests on startup")
     
     model_config = SettingsConfigDict(
         env_prefix="DRIVER_",

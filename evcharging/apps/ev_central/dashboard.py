@@ -65,6 +65,37 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         controller.record_monitor_ping(cp_id)
         return {"success": True, "cp_id": cp_id}
     
+    @app.post("/stop-session")
+    async def stop_session(payload: dict):
+        """Handle driver-initiated session stop request."""
+        cp_id = payload.get("cp_id")
+        driver_id = payload.get("driver_id")
+        session_id = payload.get("session_id")
+        
+        if not cp_id or not driver_id or not session_id:
+            raise HTTPException(status_code=400, detail="cp_id, driver_id, and session_id required")
+        
+        logger.info(f"Received stop session request from driver {driver_id} for CP {cp_id}, session {session_id}")
+        
+        # Validate CP exists and session matches
+        if cp_id not in controller.charging_points:
+            raise HTTPException(status_code=404, detail="Charging point not found")
+        
+        cp = controller.charging_points[cp_id]
+        
+        if cp.current_session != session_id:
+            logger.warning(f"Session mismatch: requested {session_id}, current {cp.current_session}")
+            raise HTTPException(status_code=400, detail="Session ID mismatch")
+        
+        if cp.current_driver != driver_id:
+            logger.warning(f"Driver mismatch: requested {driver_id}, current {cp.current_driver}")
+            raise HTTPException(status_code=403, detail="Not authorized to stop this session")
+        
+        # Send STOP_SUPPLY command to CP Engine
+        await controller.send_stop_supply_command(cp_id, "Driver requested stop")
+        
+        return {"success": True, "cp_id": cp_id, "session_id": session_id, "message": "Stop command sent"}
+    
     @app.get("/cp")
     async def list_charging_points():
         """List all charging points and their current state."""

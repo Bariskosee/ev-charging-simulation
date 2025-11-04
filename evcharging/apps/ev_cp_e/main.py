@@ -258,8 +258,9 @@ class CPEngine:
                 
                 await asyncio.sleep(self.config.telemetry_interval)
                 
-                # Simulate session completion after 10 seconds
-                if elapsed > 10:
+                # Optional: Check for session timeout (if configured)
+                if self.config.max_session_seconds is not None and elapsed > self.config.max_session_seconds:
+                    logger.info(f"CP {self.cp_id}: Session time limit reached ({self.config.max_session_seconds}s)")
                     await self.stop_supply("Session time limit reached")
                     break
         

@@ -350,13 +350,14 @@ class EVDriver:
             current = self.session_state.get(update.request_id)
             if not current:
                 current = SessionSummary(
-                    session_id=generate_id("session"),
+                    session_id=update.session_id or generate_id("session"),
                     request_id=update.request_id,
                     cp_id=update.cp_id,
                     status=new_status,
                 )
             updated = current.model_copy(
                 update={
+                    "session_id": update.session_id or current.session_id,  # Update session_id from Central
                     "status": new_status,
                     "started_at": current.started_at or (utc_now() if new_status == "CHARGING" else None),
                     "completed_at": utc_now() if new_status in {"COMPLETED", "DENIED", "FAILED"} else None,
@@ -488,22 +489,45 @@ class EVDriver:
             return True
 
     async def dashboard_stop_session(self, session_id: str) -> Optional[SessionSummary]:
+        """Request to stop an active charging session via Central."""
         async with self._state_lock:
+            # Find the session
             for req_id, summary in self.session_state.items():
                 if summary.session_id == session_id:
-                    stopped = summary.model_copy(update={"status": "STOPPED", "completed_at": utc_now()})
-                    self.session_state[req_id] = stopped
-                    self.session_history.append(SessionHistoryEntry(**stopped.model_dump(), receipt_url=None))
+                    if summary.status not in {"CHARGING", "APPROVED"}:
+                        logger.warning(f"Cannot stop session {session_id} - not in active state (status: {summary.status})")
+                        return None
+                    
+                    # Send stop request to Central via HTTP
+                    try:
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            response = await client.post(
+                                f"{self.central_http_url}/stop-session",
+                                json={
+                                    "cp_id": summary.cp_id,
+                                    "driver_id": self.driver_id,
+                                    "session_id": session_id
+                                }
+                            )
+                            response.raise_for_status()
+                            logger.info(f"Stop session request sent to Central for {session_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to send stop session request to Central: {e}")
+                        return None
+                    
+                    # Don't update local state to STOPPED immediately
+                    # Wait for COMPLETED update from Central via Kafka
+                    # This prevents the session from appearing to restart
                     self.notifications.append(
                         Notification(
                             notification_id=generate_id("note"),
                             created_at=utc_now(),
-                            message=f"Session {session_id} stopped by driver.",
+                            message=f"Session {session_id} stop requested, waiting for confirmation...",
                             type="SESSION",
                             read=False,
                         )
                     )
-                    return stopped
+                    return summary
         return None
 
 
@@ -561,8 +585,12 @@ async def main():
 
         driver._dashboard_task = dashboard_task
 
-        # Run scripted requests (if configured)
-        await driver.run_requests()
+        # Run scripted requests only if auto_run_requests is enabled
+        if driver.config.auto_run_requests:
+            logger.info("Auto-running scripted requests (auto_run_requests=True)")
+            await driver.run_requests()
+        else:
+            logger.info("Manual mode: Use the dashboard to start charging sessions")
 
         # Keep service alive to serve dashboard / notifications
         await asyncio.Future()

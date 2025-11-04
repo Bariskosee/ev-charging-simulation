@@ -12,7 +12,7 @@ import asyncio
 import argparse
 import sys
 from enum import Enum
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 
@@ -292,7 +292,8 @@ class EVCentralController:
         await self._send_driver_update(
             request,
             MessageStatus.ACCEPTED,
-            "Request accepted, starting charging"
+            "Request accepted, starting charging",
+            session_id=cp.current_session
         )
         
         # Send START_SUPPLY command to CP_E
@@ -416,7 +417,8 @@ class EVCentralController:
         self,
         request: DriverRequest,
         status: MessageStatus,
-        reason: str
+        reason: str,
+        session_id: Optional[str] = None
     ):
         """Send status update to driver."""
         update = DriverUpdate(
@@ -424,9 +426,24 @@ class EVCentralController:
             driver_id=request.driver_id,
             cp_id=request.cp_id,
             status=status,
-            reason=reason
+            reason=reason,
+            session_id=session_id
         )
         await self.producer.send(TOPICS["DRIVER_UPDATES"], update, key=request.driver_id)
+    
+    async def send_stop_supply_command(self, cp_id: str, reason: str = "Manual stop requested"):
+        """Send STOP_SUPPLY command to a charging point."""
+        if cp_id not in self.charging_points:
+            logger.error(f"Cannot send stop command to unknown CP: {cp_id}")
+            return
+        
+        command = CentralCommand(
+            cmd=CommandType.STOP_SUPPLY,
+            cp_id=cp_id,
+            payload={"reason": reason}
+        )
+        await self.producer.send(TOPICS["CENTRAL_COMMANDS"], command, key=cp_id)
+        logger.info(f"Sent STOP_SUPPLY command to {cp_id}: {reason}")
     
     async def process_messages(self):
         """Main message processing loop."""

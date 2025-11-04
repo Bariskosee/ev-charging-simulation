@@ -820,7 +820,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                                 onclick="requestSession('${{cp.cp_id}}')"
                                 ${{isDisabled ? 'disabled' : ''}}
                             >
-                                ${{cp.status === 'FREE' ? '🔌 Request Charging' : '⏳ ' + cp.status}}
+                                ${{activeSession ? '⏳ Session Active' : cp.status === 'FREE' ? '⚡ Start Charging' : '⏳ ' + cp.status}}
                             </button>
                         </div>
                     `;
@@ -852,13 +852,15 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                         'CHARGING': '🔋 Charging',
                         'COMPLETED': '✔️ Completed',
                         'DENIED': '❌ Denied',
-                        'FAILED': '⚠️ Failed'
+                        'FAILED': '⚠️ Failed',
+                        'STOPPED': '⏹️ Stopped',
+                        'CANCELLED': '🚫 Cancelled'
                     }}[activeSession.status] || activeSession.status;
                     
                     const actionBtn = activeSession.status === 'PENDING' 
                         ? `<button class="request-btn cancel-btn" onclick="cancelSession('${{activeSession.request_id}}')">❌ Cancel Request</button>`
-                        : activeSession.status === 'CHARGING'
-                        ? `<button class="request-btn stop-btn" onclick="stopSession('${{activeSession.session_id}}')">⏹️ Stop Charging</button>`
+                        : (activeSession.status === 'CHARGING' || activeSession.status === 'APPROVED')
+                        ? `<button class="request-btn stop-btn" onclick="stopSession('${{activeSession.session_id}}')">⏹️ End Charging Session</button>`
                         : '';
                     
                     const isCharging = activeSession.status === 'CHARGING';

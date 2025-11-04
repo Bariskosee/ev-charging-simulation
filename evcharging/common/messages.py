@@ -55,6 +55,7 @@ class DriverUpdate(BaseModel):
     cp_id: str = Field(..., description="Charging point identifier")
     status: MessageStatus = Field(..., description="Current status")
     reason: Optional[str] = Field(None, description="Additional information or error reason")
+    session_id: Optional[str] = Field(None, description="Session identifier assigned by Central")
     ts: datetime = Field(default_factory=utc_now, description="Timestamp")
 
     model_config = ConfigDict(

@@ -509,6 +509,7 @@ services:
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8100
       DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
     ports:
@@ -534,6 +535,7 @@ services:
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8101
       DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
     ports:
@@ -559,6 +561,7 @@ services:
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8102
       DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
     ports:
@@ -584,6 +587,7 @@ services:
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8103
       DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
     ports:
@@ -609,6 +613,7 @@ services:
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8104
       DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
     ports:
