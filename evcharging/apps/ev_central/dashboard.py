@@ -95,6 +95,22 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         await controller.send_stop_supply_command(cp_id, "Driver requested stop")
         
         return {"success": True, "cp_id": cp_id, "session_id": session_id, "message": "Stop command sent"}
+
+    @app.post("/cp/stop")
+    async def stop_cp(payload: dict):
+        """Manually stop a charging session from the dashboard."""
+        cp_id = payload.get("cp_id")
+        if not cp_id:
+            raise HTTPException(status_code=400, detail="cp_id required")
+
+        if cp_id not in controller.charging_points:
+            raise HTTPException(status_code=404, detail="Charging point not found")
+
+        logger.info(f"Manual stop requested for {cp_id} via dashboard")
+
+        await controller.send_stop_supply_command(cp_id, reason="Manual stop from dashboard")
+
+        return {"success": True, "message": f"Stop command sent to {cp_id}"}
     
     @app.get("/cp")
     async def list_charging_points():
@@ -151,7 +167,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
     async def dashboard_home(request: Request):
         """Main dashboard HTML page."""
         data = controller.get_dashboard_data()
-        
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -237,6 +253,21 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     font-size: 0.85em;
                     font-weight: bold;
                     text-transform: uppercase;
+                }}
+                .stop-btn {{
+                    background: #f44336;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-weight: bold;
+                    margin-top: 10px;
+                    width: 100%;
+                    transition: background 0.2s;
+                }}
+                .stop-btn:hover {{
+                    background: #d32f2f;
                 }}
                 .state-ACTIVATED {{ background: #4caf50; color: white; }}
                 .state-SUPPLYING {{ background: #2196f3; color: white; animation: pulse 2s infinite; }}
@@ -360,9 +391,13 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                     ${{telemetryRows}}
                                 </div>
                             `;
-                            
+
                             const driverHtml = cp.current_driver ? 
                                 `<div class="driver-info">👤 Driver: ${{cp.current_driver}}</div>` : '';
+                            
+                            const stopButtonHtml = cp.engine_state === 'SUPPLYING' ?
+                                `<button class="stop-btn" onclick="stopCharging('${{cp.cp_id}}')">Stop Charging</button>`
+                                : '';
                             
                             card.innerHTML = `
                                 <div class="cp-header">
@@ -371,6 +406,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                 </div>
                                 ${{driverHtml}}
                                 ${{statusHtml}}
+                                ${{stopButtonHtml}}
                             `;
                             
                             cpGrid.appendChild(card);
@@ -380,6 +416,22 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
                     }} catch (error) {{
                         console.error('Error updating dashboard:', error);
+                    }}
+                }}
+
+                async function stopCharging(cp_id) {{
+                    try {{
+                        const response = await fetch('/cp/stop', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ cp_id }})
+                        }});
+                        const data = await response.json();
+                        alert(data.message);
+                        updateDashboard(); // refresh state after stopping
+                    }} catch (error) {{
+                        alert('Error stopping session: ' + error);
+                        console.error(error);
                     }}
                 }}
                 
@@ -464,6 +516,13 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     {telemetry_rows}
                 </div>
             """
+
+            stop_button = ""
+            if (cp["engine_state"]) == "SUPPLYING":
+                logger.debug(f"The engine supplies: {cp['cp_id']}")
+                stop_button = f"""
+                <button class="stop-btn" onclick="stopCharging('{cp['cp_id']}')">Stop Charging</button>
+                """
             driver_html = f'<div class="driver-info">👤 Driver: {cp["current_driver"]}</div>' if cp.get('current_driver') else ''
             
             html_content += f"""
@@ -474,6 +533,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         </div>
                         {driver_html}
                         {status_html}
+                        {stop_button}
                     </div>
             """
         
