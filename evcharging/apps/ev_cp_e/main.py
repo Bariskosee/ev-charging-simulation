@@ -13,6 +13,7 @@ import asyncio
 import argparse
 import sys
 from datetime import datetime
+import json
 from loguru import logger
 
 from evcharging.common.config import CPEngineConfig, TOPICS
@@ -220,6 +221,32 @@ class CPEngine:
                 f"Total: {self.current_session.cumulative_kwh:.2f} kWh, "
                 f"€{self.current_session.cumulative_euros:.2f}"
             )
+
+            ticket = {
+                "cp_id": self.cp_id,
+                "session_id": self.current_session.session_id,
+                "driver_id": self.current_session.driver_id,
+                "energy_kwh":  self.current_session.cumulative_kwh,
+                "total_cost_eur":  self.current_session.cumulative_euros,
+                "start_time":  self.current_session.start_time,
+                "end_time": utc_now(),
+            }
+
+            ticket_file = f"/app/cp_tickets/{self.cp_id}.txt"
+            try:
+                sys.mkdir("/app/cp_tickets")
+            except FileExistsError:
+                pass
+            with open(ticket_file, "a") as f:
+                f.write(json.dumps(ticket) + "\n")
+            
+            try:
+                await self.producer.send(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
+            except Exception as e:
+                logger.warning(f"CP {self.cp_id}: Failed to notify Central — will retry later ({e})")
+            
+            logger.info(f"CP {self.cp_id}: Stored final ticket for {self.current_session.driver_id}")
+
         
         # Transition back to ACTIVATED
         await self.change_state(CPEvent.STOP_SUPPLY, reason)
