@@ -89,6 +89,8 @@ TOPICS = {
     "CENTRAL_COMMANDS": "central.commands",
     "CP_STATUS": "cp.status",
     "CP_TELEMETRY": "cp.telemetry",
+    "CP_SESSION_END": "cp.session_end",
     "DRIVER_REQUESTS": "driver.requests",
     "DRIVER_UPDATES": "driver.updates",
+    "TICKET_TO_DRIVER": "driver.ticket"
 }

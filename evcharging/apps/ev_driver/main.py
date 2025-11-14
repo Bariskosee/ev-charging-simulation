@@ -11,6 +11,7 @@ Responsibilities:
 import asyncio
 import argparse
 import sys
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -21,7 +22,7 @@ from uvicorn import Config, Server
 
 from evcharging.common.config import DriverConfig, TOPICS
 from evcharging.common.kafka import KafkaProducerHelper, KafkaConsumerHelper, ensure_topics
-from evcharging.common.messages import DriverRequest, DriverUpdate, MessageStatus
+from evcharging.common.messages import DriverRequest, DriverUpdate, MessageStatus, CPSessionTicket
 from evcharging.common.utils import generate_id, utc_now
 from evcharging.common.charging_points import get_metadata
 from evcharging.apps.ev_driver.dashboard import (
@@ -57,6 +58,7 @@ class EVDriver:
         self._running = False
         self.central_http_url = config.central_http_url.rstrip("/")
         self.dashboard_port = config.dashboard_port
+        self.ticket_file = f"driver_{self.driver_id}_tickets.txt"
     
     async def start(self):
         """Initialize and start the driver client."""
@@ -75,11 +77,13 @@ class EVDriver:
         # Initialize Kafka consumer for updates
         self.consumer = KafkaConsumerHelper(
             self.config.kafka_bootstrap,
-            topics=[TOPICS["DRIVER_UPDATES"]],
+            topics=[TOPICS["DRIVER_UPDATES"], TOPICS["TICKET_TO_DRIVER"]],
             group_id=f"driver-{self.driver_id}",
             auto_offset_reset="latest"
         )
         await self.consumer.start()
+
+        await self.load_saved_tickets();
         
         logger.info(f"Driver {self.driver_id} started successfully")
         self._running = True
@@ -186,6 +190,22 @@ class EVDriver:
         if update.status in {MessageStatus.COMPLETED, MessageStatus.DENIED, MessageStatus.FAILED}:
             self.completed_requests.append(request_id)
             del self.pending_requests[request_id]
+        
+    async def handle_ticket(self, ticket: CPSessionTicket):
+        """Persist the ticket locally and handle logic."""
+        logger.info(f"Received ticket for driver {self.driver_id}: {ticket}")
+
+        if not hasattr(self, "saved_tickets"):
+            self.saved_tickets = []
+        self.saved_tickets.append(ticket)
+
+        try:
+            with open(self.ticket_file, "a", encoding="utf-8") as f:
+                f.write(ticket.model_dump_json() + "\n")
+
+            logger.info(f"Ticket saved to {self.ticket_file}")
+        except Exception as e:
+            logger.error(f"Failed to write ticket: {e}")
     
     async def process_updates(self):
         """Listen for status updates from Central."""
@@ -203,6 +223,44 @@ class EVDriver:
             
             except Exception as e:
                 logger.error(f"Error processing update: {e}")
+            
+    async def process_tickets(self):
+        """Listen for new tickets from Central after ended session."""
+        async for msg in self.consumer.consume():
+            try:
+                topic = msg["topic"]
+                value = msg["value"]
+                
+                if topic == TOPICS["TICKET_TO_DRIVER"]:
+                    ticket = CPSessionTicket(**value)
+                    
+                    # Filter by driver ID
+                    if ticket.driver_id == self.driver_id:
+                        await self.handle_ticket(ticket)
+            
+            except Exception as e:
+                logger.error(f"Error processing update: {e}")
+    
+    async def load_saved_tickets(self):
+        """Load previously saved tickets from file on driver restart."""
+        self.saved_tickets = []
+
+        try:
+            with open(self.ticket_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        self.saved_tickets.append(CPSessionTicket(**data))
+                    except Exception as e:
+                        logger.warning(f"Could not parse ticket line: {line} ({e})")
+
+            logger.info(f"Loaded {len(self.saved_tickets)} saved tickets")
+        except FileNotFoundError:
+            logger.info("No saved tickets file found — starting clean.")
+
     
     async def run_requests(self):
         """Execute charging requests from file."""

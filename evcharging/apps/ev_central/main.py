@@ -11,6 +11,8 @@ Responsibilities:
 import asyncio
 import argparse
 import sys
+import os
+import json
 from enum import Enum
 from typing import Dict, Optional
 from datetime import datetime, timedelta
@@ -20,7 +22,7 @@ from evcharging.common.config import CentralConfig, TOPICS
 from evcharging.common.kafka import KafkaProducerHelper, KafkaConsumerHelper, ensure_topics
 from evcharging.common.messages import (
     DriverRequest, DriverUpdate, MessageStatus, CentralCommand, CommandType,
-    CPStatus, CPTelemetry, CPRegistration
+    CPStatus, CPTelemetry, CPSessionTicket, CPRegistration
 )
 from evcharging.common.states import CPState, can_supply
 from evcharging.common.utils import utc_now, generate_id
@@ -120,7 +122,8 @@ class EVCentralController:
         # Initialize Kafka consumer for driver requests and CP status
         self.consumer = KafkaConsumerHelper(
             self.config.kafka_bootstrap,
-            topics=[TOPICS["DRIVER_REQUESTS"], TOPICS["CP_STATUS"], TOPICS["CP_TELEMETRY"]],
+            topics=[TOPICS["DRIVER_REQUESTS"], TOPICS["CP_STATUS"], 
+                    TOPICS["CP_TELEMETRY"], TOPICS["CP_SESSION_END"]],
             group_id="central-controller",
             auto_offset_reset="latest"
         )
@@ -412,6 +415,21 @@ class EVCentralController:
                             f"Charging: {telemetry.kw:.1f} kW, €{telemetry.euros:.2f}"
                         )
                         break
+
+    async def handle_session_end(self, message):
+        ticket = message.value
+        driver_id = ticket["driver_id"]
+
+        ticket_file = f"/app/driver_tickets/{driver_id}.txt"
+        os.makedirs("/app/driver_tickets", exist_ok=True)
+
+        with open(ticket_file, "a") as f:
+            f.write(json.dumps(ticket) + "\n")
+        
+        await self.producer.send(TOPICS["TICKET_TO_DRIVER"],ticket.model_dump(),key=driver_id)
+
+        logger.info(f"Saved final ticket for driver {driver_id} (session {ticket['session_id']})")
+
     
     async def _send_driver_update(
         self,
@@ -463,6 +481,10 @@ class EVCentralController:
                 elif topic == TOPICS["CP_TELEMETRY"]:
                     telemetry = CPTelemetry(**value)
                     await self.handle_cp_telemetry(telemetry)
+                
+                elif topic == TOPICS["CP_SESSION_END"]:
+                    ticket = CPSessionTicket(**value)
+                    self.handle_session_end(ticket)
             
             except Exception as e:
                 logger.error(f"Error processing message from {msg.get('topic')}: {e}")

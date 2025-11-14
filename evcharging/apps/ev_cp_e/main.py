@@ -12,6 +12,7 @@ Responsibilities:
 import asyncio
 import argparse
 import sys
+import os
 from datetime import datetime
 import json
 from loguru import logger
@@ -80,6 +81,9 @@ class CPEngine:
         
         # Auto-activate CP for immediate availability
         await self.change_state(CPEvent.CONNECT, "Engine started - auto-connecting")
+
+        # Resend any exisiting tickets from the txt file to the Central
+        await self.resend_stored_tickets()
         
         # Record startup time for demo mode (ignore STOP commands for first 10 seconds)
         import time
@@ -233,10 +237,7 @@ class CPEngine:
             }
 
             ticket_file = f"/app/cp_tickets/{self.cp_id}.txt"
-            try:
-                sys.mkdir("/app/cp_tickets")
-            except FileExistsError:
-                pass
+            os.makedirs("/app/tickets", exist_ok=True)
             with open(ticket_file, "a") as f:
                 f.write(json.dumps(ticket) + "\n")
             
@@ -251,6 +252,21 @@ class CPEngine:
         # Transition back to ACTIVATED
         await self.change_state(CPEvent.STOP_SUPPLY, reason)
         self.current_session = None
+
+    async def resend_stored_tickets(self):
+        ticket_dir = "/app/tickets"
+        if not os.path.exists(ticket_dir):
+            return
+        for file_name in os.listdir(ticket_dir):
+            with open(os.path.join(ticket_dir, file_name)) as f:
+                for line in f:
+                    ticket = json.loads(line.strip())
+                    try:
+                        await self.producer.send(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
+                        logger.info(f"Resent stored ticket for {ticket['driver_id']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to resend ticket {ticket['session_id']}: {e}")
+
     
     async def emit_telemetry(self):
         """Emit telemetry data during charging session."""
