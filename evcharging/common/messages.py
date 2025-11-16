@@ -143,14 +143,11 @@ class CPSessionTicket(BaseModel):
     cp_id: str = Field(..., description="Charging point identifier")
     session_id: str = Field(..., description="Charging session identifier")
     driver_id: str = Field(..., description="Driver involved in the session")
-
     start_time: datetime = Field(..., description="When the charging session began")
     end_time: datetime = Field(default_factory=utc_now,
                                description="When the charging session ended")
-    
     energy_kwh: float = Field(..., description="Total delivered energy in kWh")
     total_cost_eur: float = Field(..., description="Total cost accumulated in euros")
-
     ts: datetime = Field(default_factory=utc_now,
                          description="Timestamp when the ticket was created by CP_E")
 

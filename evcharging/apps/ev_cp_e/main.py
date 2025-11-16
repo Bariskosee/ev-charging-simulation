@@ -20,7 +20,7 @@ from loguru import logger
 from evcharging.common.config import CPEngineConfig, TOPICS
 from evcharging.common.kafka import KafkaProducerHelper, KafkaConsumerHelper, ensure_topics
 from evcharging.common.messages import (
-    CentralCommand, CPStatus, CPTelemetry, CommandType
+    CentralCommand, CPStatus, CPTelemetry, CommandType, CPSessionTicket
 )
 from evcharging.common.states import CPState, CPEvent, transition, StateTransitionError
 from evcharging.common.utils import utc_now
@@ -209,6 +209,8 @@ class CPEngine:
         if self.state != CPState.SUPPLYING:
             logger.warning(f"CP {self.cp_id}: Cannot stop supply, not in SUPPLYING state")
             return
+
+        logger.warning("=== Engine STOP SUPPLY called")
         
         # Stop telemetry
         if self.telemetry_task and not self.telemetry_task.done():
@@ -226,23 +228,24 @@ class CPEngine:
                 f"€{self.current_session.cumulative_euros:.2f}"
             )
 
-            ticket = {
-                "cp_id": self.cp_id,
-                "session_id": self.current_session.session_id,
-                "driver_id": self.current_session.driver_id,
-                "energy_kwh":  self.current_session.cumulative_kwh,
-                "total_cost_eur":  self.current_session.cumulative_euros,
-                "start_time":  self.current_session.start_time,
-                "end_time": utc_now(),
-            }
+            ticket = CPSessionTicket (
+                cp_id=self.cp_id,
+                session_id=self.current_session.session_id,
+                driver_id=self.current_session.driver_id,
+                start_time=self.current_session.start_time,
+                end_time=utc_now(),
+                energy_kwh=self.current_session.cumulative_kwh,
+                total_cost_eur=self.current_session.cumulative_euros,
+            )
 
-            ticket_file = f"/app/cp_tickets/{self.cp_id}.txt"
-            os.makedirs("/app/tickets", exist_ok=True)
+            ticket_file = f"tickets/{self.cp_id}.txt"
+            os.makedirs("tickets", exist_ok=True)
             with open(ticket_file, "a") as f:
-                f.write(json.dumps(ticket) + "\n")
+                f.write(ticket.model_dump_json() + "\n")
             
             try:
                 await self.producer.send(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
+                logger.warning("=== Sent CP_SESSION_END event")
             except Exception as e:
                 logger.warning(f"CP {self.cp_id}: Failed to notify Central — will retry later ({e})")
             
@@ -254,7 +257,7 @@ class CPEngine:
         self.current_session = None
 
     async def resend_stored_tickets(self):
-        ticket_dir = "/app/tickets"
+        ticket_dir = "tickets"
         if not os.path.exists(ticket_dir):
             return
         for file_name in os.listdir(ticket_dir):

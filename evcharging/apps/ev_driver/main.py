@@ -11,6 +11,7 @@ Responsibilities:
 import asyncio
 import argparse
 import sys
+import os
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,7 +59,7 @@ class EVDriver:
         self._running = False
         self.central_http_url = config.central_http_url.rstrip("/")
         self.dashboard_port = config.dashboard_port
-        self.ticket_file = f"driver_{self.driver_id}_tickets.txt"
+        self.ticket_file = f"driver_tickets/driver_{self.driver_id}_tickets.txt"
     
     async def start(self):
         """Initialize and start the driver client."""
@@ -200,6 +201,7 @@ class EVDriver:
         self.saved_tickets.append(ticket)
 
         try:
+            os.makedirs("driver_tickets", exist_ok=True)
             with open(self.ticket_file, "a", encoding="utf-8") as f:
                 f.write(ticket.model_dump_json() + "\n")
 
@@ -232,6 +234,7 @@ class EVDriver:
                 value = msg["value"]
                 
                 if topic == TOPICS["TICKET_TO_DRIVER"]:
+                    logger.warning("=== DRIVER received ticket")
                     ticket = CPSessionTicket(**value)
                     
                     # Filter by driver ID
@@ -620,6 +623,7 @@ async def main():
     driver = EVDriver(config)
     
     update_task: Optional[asyncio.Task] = None
+    ticket_task: Optional[asyncio.Task] = None
     dashboard_task: Optional[asyncio.Task] = None
 
     try:
@@ -627,6 +631,7 @@ async def main():
 
         # Start update listener
         update_task = asyncio.create_task(driver.process_updates(), name="driver-update-listener")
+        ticket_task = asyncio.create_task(driver.process_tickets(), name="driver-ticket-listener")
 
         # Start dashboard HTTP server
         dashboard_app = create_driver_dashboard_app(driver)
@@ -659,7 +664,7 @@ async def main():
         logger.error(f"Fatal error: {e}")
         raise
     finally:
-        for task in (update_task, dashboard_task):
+        for task in (update_task, ticket_task, dashboard_task):
             if task and not task.done():
                 task.cancel()
                 try:

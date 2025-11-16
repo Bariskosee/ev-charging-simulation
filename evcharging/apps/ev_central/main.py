@@ -420,13 +420,13 @@ class EVCentralController:
         ticket = message.value
         driver_id = ticket["driver_id"]
 
-        ticket_file = f"/app/driver_tickets/{driver_id}.txt"
-        os.makedirs("/app/driver_tickets", exist_ok=True)
+        ticket_file = f"central_tickets/{driver_id}.txt"
+        os.makedirs("central_tickets", exist_ok=True)
 
         with open(ticket_file, "a") as f:
             f.write(json.dumps(ticket) + "\n")
         
-        await self.producer.send(TOPICS["TICKET_TO_DRIVER"],ticket.model_dump(),key=driver_id)
+        await self.producer.send(TOPICS["TICKET_TO_DRIVER"], ticket, key=driver_id)
 
         logger.info(f"Saved final ticket for driver {driver_id} (session {ticket['session_id']})")
 
@@ -483,8 +483,9 @@ class EVCentralController:
                     await self.handle_cp_telemetry(telemetry)
                 
                 elif topic == TOPICS["CP_SESSION_END"]:
+                    logger.warning("=== CENTRAL received SESSION_END event")
                     ticket = CPSessionTicket(**value)
-                    self.handle_session_end(ticket)
+                    await self.handle_session_end(ticket)
             
             except Exception as e:
                 logger.error(f"Error processing message from {msg.get('topic')}: {e}")
