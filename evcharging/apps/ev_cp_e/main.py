@@ -244,7 +244,7 @@ class CPEngine:
                 f.write(ticket.model_dump_json() + "\n")
             
             try:
-                await self.producer.send(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
+                await self.producer.send(TOPICS["CP_SESSION_END"], ticket.model_dump(mode="json"), key=self.cp_id)
                 logger.warning("=== Sent CP_SESSION_END event")
             except Exception as e:
                 logger.warning(f"CP {self.cp_id}: Failed to notify Central — will retry later ({e})")

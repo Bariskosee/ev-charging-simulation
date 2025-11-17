@@ -416,19 +416,18 @@ class EVCentralController:
                         )
                         break
 
-    async def handle_session_end(self, message):
-        ticket = message.value
-        driver_id = ticket["driver_id"]
+    async def handle_session_end(self, ticket: CPSessionTicket):
+        driver_id = ticket.driver_id
 
         ticket_file = f"central_tickets/{driver_id}.txt"
         os.makedirs("central_tickets", exist_ok=True)
 
         with open(ticket_file, "a") as f:
-            f.write(json.dumps(ticket) + "\n")
+            f.write(ticket.model_dump_json() + "\n")
         
-        await self.producer.send(TOPICS["TICKET_TO_DRIVER"], ticket, key=driver_id)
+        await self.producer.send(TOPICS["TICKET_TO_DRIVER"], ticket.model_dump(mode="json"), key=driver_id)
 
-        logger.info(f"Saved final ticket for driver {driver_id} (session {ticket['session_id']})")
+        logger.info(f"Saved final ticket for driver {driver_id} (session {ticket.session_id})")
 
     
     async def _send_driver_update(
@@ -599,9 +598,10 @@ async def main():
         
         # Start message processing
         processing_task = asyncio.create_task(_controller.process_messages())
-        
-        logger.info(f"Dashboard available at http://localhost:{config.http_port}")
-        logger.info(f"TCP control server listening on port {config.listen_port}")
+
+        #komentarz
+        #logger.info(f"Dashboard available at http://localhost:{config.http_port}")
+        #logger.info(f"TCP control server listening on port {config.listen_port}")
         
         # Wait for all tasks
         await asyncio.gather(tcp_task, server_task, processing_task)

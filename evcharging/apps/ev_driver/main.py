@@ -194,6 +194,9 @@ class EVDriver:
         
     async def handle_ticket(self, ticket: CPSessionTicket):
         """Persist the ticket locally and handle logic."""
+        if ticket.driver_id != self.driver_id:
+            return
+        
         logger.info(f"Received ticket for driver {self.driver_id}: {ticket}")
 
         if not hasattr(self, "saved_tickets"):
@@ -242,7 +245,7 @@ class EVDriver:
                         await self.handle_ticket(ticket)
             
             except Exception as e:
-                logger.error(f"Error processing update: {e}")
+                logger.error(f"Error processing ticket: {e}")
     
     async def load_saved_tickets(self):
         """Load previously saved tickets from file on driver restart."""
