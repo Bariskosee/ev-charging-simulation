@@ -196,14 +196,13 @@ class EVDriver:
         """Persist the ticket locally and handle logic."""
         if ticket.driver_id != self.driver_id:
             return
-        
-        logger.info(f"Received ticket for driver {self.driver_id}: {ticket}")
-
+    
         if not hasattr(self, "saved_tickets"):
             self.saved_tickets = []
         self.saved_tickets.append(ticket)
 
         try:
+            logger.info(f"Received ticket for driver {self.driver_id}: {ticket}")
             os.makedirs("driver_tickets", exist_ok=True)
             with open(self.ticket_file, "a", encoding="utf-8") as f:
                 f.write(ticket.model_dump_json() + "\n")
@@ -237,11 +236,11 @@ class EVDriver:
                 value = msg["value"]
                 
                 if topic == TOPICS["TICKET_TO_DRIVER"]:
-                    logger.warning("=== DRIVER received ticket")
                     ticket = CPSessionTicket(**value)
-                    
+                                        
                     # Filter by driver ID
                     if ticket.driver_id == self.driver_id:
+                        logger.warning("=== DRIVER received ticket")
                         await self.handle_ticket(ticket)
             
             except Exception as e:
