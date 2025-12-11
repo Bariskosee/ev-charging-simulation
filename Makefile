@@ -1,4 +1,4 @@
-.PHONY: help install test up down logs clean deploy verify build status remote-kafka lab-deploy
+.PHONY: help install test up down logs clean deploy verify build status remote-kafka lab-deploy registry-test
 
 help:
 	@echo "EV Charging Simulation - Makefile Commands"
@@ -9,6 +9,11 @@ help:
 	@echo "  make remote-kafka   - Start services with remote Kafka"
 	@echo "  make lab-deploy     - Deploy for lab environment"
 	@echo "  make build          - Build Docker images"
+	@echo ""
+	@echo "EV_Registry (Release 2):"
+	@echo "  make registry       - Start only EV_Registry service"
+	@echo "  make registry-test  - Run EV_Registry API tests"
+	@echo "  make registry-logs  - Show EV_Registry logs"
 	@echo ""
 	@echo "Management:"
 	@echo "  make down           - Stop all services"
@@ -33,6 +38,21 @@ install:
 test:
 	pytest evcharging/tests/ -v
 
+# EV_Registry commands
+registry:
+	@echo "Starting EV_Registry service..."
+	docker compose up -d ev-registry
+	@echo ""
+	@echo "EV_Registry started! Access API docs at http://localhost:8080/docs"
+	@echo "Run 'make registry-test' to test the API"
+
+registry-test:
+	@echo "Running EV_Registry API tests..."
+	@./test_registry.sh
+
+registry-logs:
+	docker compose logs -f ev-registry
+
 # Deployment commands
 deploy:
 	@echo "Running interactive deployment..."
@@ -47,6 +67,7 @@ up:
 	docker compose up -d
 	@echo ""
 	@echo "Services started! Access dashboard at http://localhost:8000"
+	@echo "EV_Registry API: http://localhost:8080/docs"
 	@echo "Run 'make logs' to view logs or 'make verify' to check status"
 
 remote-kafka:

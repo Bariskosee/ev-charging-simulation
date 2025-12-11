@@ -84,6 +84,35 @@ class DriverConfig(BaseSettings):
     )
 
 
+class RegistryConfig(BaseSettings):
+    """Configuration for EV Registry service."""
+    
+    api_port: int = Field(default=8080, description="REST API port")
+    db_path: str = Field(default="ev_charging.db", description="Database file path")
+    log_level: str = Field(default="INFO", description="Logging level")
+    
+    # TLS/SSL Configuration
+    tls_enabled: bool = Field(default=False, description="Enable HTTPS/TLS")
+    tls_cert_file: Optional[str] = Field(default=None, description="Path to TLS certificate file")
+    tls_key_file: Optional[str] = Field(default=None, description="Path to TLS private key file")
+    
+    # Security Settings
+    token_expiration_hours: int = Field(default=24, description="Authentication token expiration in hours")
+    secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for token signing")
+    require_certificate: bool = Field(default=False, description="Require client certificates for authentication")
+    
+    # API Security
+    api_key_header: str = Field(default="X-Registry-API-Key", description="API key header name")
+    admin_api_key: Optional[str] = Field(default=None, description="Admin API key for management endpoints")
+    
+    model_config = SettingsConfigDict(
+        env_prefix="REGISTRY_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+
 # Kafka topic names
 TOPICS = {
     "CENTRAL_COMMANDS": "central.commands",

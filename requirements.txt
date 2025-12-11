@@ -27,6 +27,13 @@ loguru==0.7.2
 # Data Handling
 python-dateutil==2.8.2
 
+# Security & Cryptography (for EV_Registry)
+cryptography==41.0.7
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+bcrypt==4.1.2
+
 # Development/Testing (optional)
 pytest==7.4.3
 pytest-asyncio==0.21.1

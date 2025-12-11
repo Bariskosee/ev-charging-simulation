@@ -6,6 +6,35 @@ A distributed, event-driven electric vehicle charging management system demonstr
 [![Docker](https://img.shields.io/badge/docker-required-blue.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## 🆕 Release 2: EV_Registry Service
+
+**NEW in Release 2**: Secure REST API for Charging Point registration, deregistration, and authentication.
+
+- 🔒 **Secure CP registration** with bcrypt credentials and JWT tokens
+- 🌐 **REST API** with OpenAPI/Swagger documentation
+- 🔑 **Authentication system** for CPs before connecting to EV_Central
+- 🛡️ **TLS/HTTPS support** for production deployments
+- 📜 **Certificate-based authentication** (optional)
+
+**Quick Start**:
+```bash
+# Start EV_Registry service
+make registry
+
+# Access API documentation
+open http://localhost:8080/docs
+
+# Run tests
+make registry-test
+```
+
+**Documentation**:
+- **[EV_REGISTRY_QUICKSTART.md](EV_REGISTRY_QUICKSTART.md)** - 5-minute getting started guide
+- **[EV_REGISTRY_README.md](EV_REGISTRY_README.md)** - Complete API documentation
+- **[EV_REGISTRY_IMPLEMENTATION.md](EV_REGISTRY_IMPLEMENTATION.md)** - Implementation details
+
+---
+
 ## 🎬 Autonomous Operation
 
 **This system is designed for fully autonomous operation with ZERO user interaction required.**
@@ -23,7 +52,7 @@ docker compose up -d
 ```
 
 That's it! The entire system will:
-- ✅ Start **17 services** automatically (1 Kafka, 1 Central, 5 CPs, 5 Monitors, 5 Drivers)
+- ✅ Start **18 services** automatically (1 Kafka, 1 Central, 1 Registry, 5 CPs, 5 Monitors, 5 Drivers)
 - ✅ Initialize and connect without intervention
 - ✅ Begin autonomous charging operations
 - ✅ Demonstrate all functionality through observable terminal outputs
@@ -31,20 +60,27 @@ That's it! The entire system will:
 
 ### 📚 Documentation
 
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - 📄 **Quick reference card for lab deployments (print this!)**
+**Release 2 (NEW)**:
+- **[EV_REGISTRY_QUICKSTART.md](EV_REGISTRY_QUICKSTART.md)** - 🆕 Quick start for CP registration API
+- **[EV_REGISTRY_README.md](EV_REGISTRY_README.md)** - 🆕 Complete Registry documentation
+- **[EV_REGISTRY_IMPLEMENTATION.md](EV_REGISTRY_IMPLEMENTATION.md)** - 🆕 Implementation summary
+
+**Release 1**:
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - 📄 Quick reference card for lab deployments (print this!)
 - **[QUICKSTART.md](QUICKSTART.md)** - Fast local setup for single computer (Windows/macOS/Linux)
 - **[LAB_DEPLOYMENT_SUMMARY.md](LAB_DEPLOYMENT_SUMMARY.md)** - Complete guide for 3 Windows lab computers
-- **[WINDOWS_DEPLOYMENT.md](WINDOWS_DEPLOYMENT.md)** - 🪟 **Windows PowerShell scripts and 3-window lab guide**
-- **[TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md)** - 🔧 **Complete troubleshooting guide for multi-machine deployments**
+- **[WINDOWS_DEPLOYMENT.md](WINDOWS_DEPLOYMENT.md)** - 🪟 Windows PowerShell scripts and 3-window lab guide
+- **[TROUBLESHOOTING_GUIDE.md](TROUBLESHOOTING_GUIDE.md)** - 🔧 Complete troubleshooting guide for multi-machine deployments
 - **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Comprehensive deployment options
 - **[CRASH_RESILIENCE.md](CRASH_RESILIENCE.md)** - Crash simulation and fault tolerance testing
 - **[DYNAMIC_DEPLOYMENT.md](DYNAMIC_DEPLOYMENT.md)** - Dynamic CP/Driver addition at runtime
 
 ### 📊 Observe the System
 
-**Web Dashboard** (real-time visual monitoring):
+**Web Dashboards**:
 ```
-http://localhost:8000
+EV Central Dashboard:  http://localhost:8000
+EV Registry API Docs:  http://localhost:8080/docs
 ```
 
 **Terminal Logs** (detailed event streams):

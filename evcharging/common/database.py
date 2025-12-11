@@ -98,6 +98,35 @@ class FaultHistoryDB:
                 ON charging_sessions(driver_id)
             """)
             
+            # CP Registry tables for EV_Registry module
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cp_registry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cp_id TEXT NOT NULL UNIQUE,
+                    location TEXT NOT NULL,
+                    credentials_hash TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'REGISTERED',
+                    registration_date TEXT NOT NULL,
+                    deregistration_date TEXT,
+                    last_authenticated TEXT,
+                    certificate_fingerprint TEXT,
+                    metadata TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create indexes for CP registry
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cp_registry_cp_id 
+                ON cp_registry(cp_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cp_registry_status 
+                ON cp_registry(status)
+            """)
+            
             conn.commit()
     
     @contextmanager
@@ -363,3 +392,231 @@ class FaultHistoryDB:
             
             row = cursor.fetchone()
             return dict(row) if row else {}
+
+
+class CPRegistryDB:
+    """Database manager for CP registry and authentication."""
+    
+    def __init__(self, db_path: str = "ev_charging.db"):
+        """
+        Initialize database connection.
+        
+        Args:
+            db_path: Path to SQLite database file
+        """
+        self.db_path = db_path
+        # Ensure tables exist by initializing the parent database
+        FaultHistoryDB(db_path)
+    
+    @contextmanager
+    def _get_connection(self):
+        """Context manager for database connections."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+    
+    def register_cp(
+        self,
+        cp_id: str,
+        location: str,
+        credentials_hash: str,
+        certificate_fingerprint: Optional[str] = None,
+        metadata: Optional[str] = None
+    ) -> bool:
+        """
+        Register a new charging point or update existing registration.
+        
+        Args:
+            cp_id: Charging point identifier
+            location: CP location (city or address)
+            credentials_hash: Hashed credentials for authentication
+            certificate_fingerprint: Optional SSL certificate fingerprint
+            metadata: Optional JSON metadata
+            
+        Returns:
+            True if registered successfully, False if already registered
+        """
+        registration_date = utc_now().isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if CP already exists
+            cursor.execute("SELECT status FROM cp_registry WHERE cp_id = ?", (cp_id,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing registration
+                cursor.execute("""
+                    UPDATE cp_registry
+                    SET location = ?, credentials_hash = ?, status = 'REGISTERED',
+                        deregistration_date = NULL, certificate_fingerprint = ?,
+                        metadata = ?, updated_at = ?
+                    WHERE cp_id = ?
+                """, (location, credentials_hash, certificate_fingerprint, 
+                      metadata, registration_date, cp_id))
+                conn.commit()
+                return False  # Was already registered
+            else:
+                # Insert new registration
+                cursor.execute("""
+                    INSERT INTO cp_registry 
+                    (cp_id, location, credentials_hash, status, registration_date,
+                     certificate_fingerprint, metadata, updated_at)
+                    VALUES (?, ?, ?, 'REGISTERED', ?, ?, ?, ?)
+                """, (cp_id, location, credentials_hash, registration_date,
+                      certificate_fingerprint, metadata, registration_date))
+                conn.commit()
+                return True  # New registration
+    
+    def deregister_cp(self, cp_id: str) -> bool:
+        """
+        Deregister a charging point.
+        
+        Args:
+            cp_id: Charging point identifier
+            
+        Returns:
+            True if deregistered successfully, False if not found or already deregistered
+        """
+        deregistration_date = utc_now().isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE cp_registry
+                SET status = 'DEREGISTERED', deregistration_date = ?, updated_at = ?
+                WHERE cp_id = ? AND status = 'REGISTERED'
+            """, (deregistration_date, deregistration_date, cp_id))
+            
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def get_cp(self, cp_id: str) -> Optional[Dict]:
+        """
+        Get CP registration details.
+        
+        Args:
+            cp_id: Charging point identifier
+            
+        Returns:
+            Dictionary with CP details or None if not found
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT cp_id, location, status, registration_date, deregistration_date,
+                       last_authenticated, certificate_fingerprint, metadata, 
+                       created_at, updated_at
+                FROM cp_registry
+                WHERE cp_id = ?
+            """, (cp_id,))
+            
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_cp_credentials(self, cp_id: str) -> Optional[str]:
+        """
+        Get CP credentials hash for authentication.
+        
+        Args:
+            cp_id: Charging point identifier
+            
+        Returns:
+            Credentials hash or None if not found
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT credentials_hash
+                FROM cp_registry
+                WHERE cp_id = ? AND status = 'REGISTERED'
+            """, (cp_id,))
+            
+            row = cursor.fetchone()
+            return row['credentials_hash'] if row else None
+    
+    def update_last_authenticated(self, cp_id: str):
+        """
+        Update last authentication timestamp for a CP.
+        
+        Args:
+            cp_id: Charging point identifier
+        """
+        timestamp = utc_now().isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE cp_registry
+                SET last_authenticated = ?, updated_at = ?
+                WHERE cp_id = ?
+            """, (timestamp, timestamp, cp_id))
+            conn.commit()
+    
+    def list_cps(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict]:
+        """
+        List all registered CPs with optional filtering.
+        
+        Args:
+            status: Filter by status ('REGISTERED', 'DEREGISTERED', or None for all)
+            limit: Maximum number of records to return
+            offset: Number of records to skip
+            
+        Returns:
+            List of CP dictionaries
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT cp_id, location, status, registration_date, deregistration_date,
+                       last_authenticated, certificate_fingerprint, metadata,
+                       created_at, updated_at
+                FROM cp_registry
+            """
+            params = []
+            
+            if status:
+                query += " WHERE status = ?"
+                params.append(status)
+            
+            query += " ORDER BY registration_date DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def count_cps(self, status: Optional[str] = None) -> int:
+        """
+        Count CPs with optional status filter.
+        
+        Args:
+            status: Filter by status or None for all
+            
+        Returns:
+            Count of CPs
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if status:
+                cursor.execute("""
+                    SELECT COUNT(*) as count
+                    FROM cp_registry
+                    WHERE status = ?
+                """, (status,))
+            else:
+                cursor.execute("SELECT COUNT(*) as count FROM cp_registry")
+            
+            row = cursor.fetchone()
+            return row['count'] if row else 0
