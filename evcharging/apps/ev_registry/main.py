@@ -198,7 +198,6 @@ def create_app(config: RegistryConfig) -> FastAPI:
     @app.post(
         "/cp/register",
         response_model=CPRegisterResponse,
-        status_code=status.HTTP_200_OK,
         tags=["Registration"]
     )
     async def register_cp(
@@ -332,7 +331,7 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 f"(cert={cert_fingerprint is not None})"
             )
             
-            return CPRegisterResponse(
+            response_data = CPRegisterResponse(
                 cp_id=request.cp_id,
                 location=request.location,
                 status="REGISTERED",
@@ -341,6 +340,13 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 token_expires_at=token_expires_at,
                 registration_date=registration_date,
                 message="CP registered successfully. Store credentials securely - they cannot be retrieved later."
+            )
+            
+            # Return 201 for new registration, 200 for re-registration
+            status_code = status.HTTP_201_CREATED if not is_reregistration else status.HTTP_200_OK
+            return JSONResponse(
+                status_code=status_code,
+                content=response_data.model_dump()
             )
         
         except HTTPException:
@@ -449,7 +455,7 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 logger.warning(f"Authentication failed: Invalid credentials for {request.cp_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication failed"
+                    detail="Invalid credentials"
                 )
             
             # Enforce certificate requirement if configured
@@ -551,7 +557,8 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 import json
                 try:
                     metadata = json.loads(cp_info['metadata'])
-                except:
+                except (json.JSONDecodeError, TypeError):
+                    # Invalid JSON in metadata, skip it
                     pass
             
             return CPInfoResponse(
@@ -624,7 +631,8 @@ def create_app(config: RegistryConfig) -> FastAPI:
                     import json
                     try:
                         metadata = json.loads(cp['metadata'])
-                    except:
+                    except (json.JSONDecodeError, TypeError):
+                        # Invalid JSON in metadata, skip it
                         pass
                 
                 cp_responses.append(CPInfoResponse(
