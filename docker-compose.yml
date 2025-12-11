@@ -105,11 +105,25 @@ services:
       REGISTRY_DB_PATH: /data/ev_registry.db
       REGISTRY_LOG_LEVEL: INFO
       REGISTRY_TOKEN_EXPIRATION_HOURS: 24
-      REGISTRY_SECRET_KEY: ${REGISTRY_SECRET_KEY:-change-this-secret-key-in-production}
-      REGISTRY_TLS_ENABLED: "false"
-      REGISTRY_REQUIRE_CERTIFICATE: "false"
+      # SECURITY: Must set strong secret key via environment variable
+      # Generate with: openssl rand -hex 32
+      REGISTRY_SECRET_KEY: ${REGISTRY_SECRET_KEY}
+      REGISTRY_JWT_ISSUER: "ev-registry"
+      REGISTRY_JWT_AUDIENCE: "ev-central"
+      # TLS Configuration (required for production)
+      REGISTRY_TLS_ENABLED: "${REGISTRY_TLS_ENABLED:-false}"
+      REGISTRY_ALLOW_INSECURE: "${REGISTRY_ALLOW_INSECURE:-true}"
+      REGISTRY_TLS_CERT_FILE: "${REGISTRY_TLS_CERT_FILE:-}"
+      REGISTRY_TLS_KEY_FILE: "${REGISTRY_TLS_KEY_FILE:-}"
+      # Certificate Authentication (optional)
+      REGISTRY_REQUIRE_CERTIFICATE: "${REGISTRY_REQUIRE_CERTIFICATE:-false}"
+      # Admin API Key for re-registration (optional but recommended)
+      REGISTRY_ADMIN_API_KEY: "${REGISTRY_ADMIN_API_KEY:-}"
     volumes:
       - registry-data:/data
+      # Mount certificates if TLS is enabled
+      # - ./certs/registry-cert.pem:/certs/cert.pem:ro
+      # - ./certs/registry-key.pem:/certs/key.pem:ro
     networks:
       - evcharging-network
     restart: unless-stopped

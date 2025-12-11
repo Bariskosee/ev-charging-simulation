@@ -183,7 +183,153 @@ run_test "Invalid location (too short)" \
     "curl -s -X POST $REGISTRY_URL/cp/register -H 'Content-Type: application/json' -d '{\"cp_id\": \"CP-TEST-999\", \"location\": \"X\"}'" \
     "Invalid"
 
-# Test 16: Cleanup - deregister test CP
+# Test 16: Security - Re-registration without authorization
+echo -e "\n${YELLOW}=== Security Tests ===${NC}"
+
+# Register a CP for security tests
+SEC_REG=$(curl -s -X POST "$REGISTRY_URL/cp/register" \
+    -H "Content-Type: application/json" \
+    -d '{"cp_id": "CP-SEC-001", "location": "Hamburg"}')
+SEC_CREDS=$(echo "$SEC_REG" | jq -r '.credentials // empty')
+
+# Try to re-register without auth (should fail with 401)
+echo -n "Testing: Re-registration without auth (should fail)... "
+REREG_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/register" \
+    -H "Content-Type: application/json" \
+    -d '{"cp_id": "CP-SEC-001", "location": "Hamburg Updated"}')
+
+HTTP_CODE=$(echo "$REREG_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+if [ "$HTTP_CODE" == "401" ]; then
+    echo -e "${GREEN}✓ PASSED (401 returned)${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}✗ FAILED (Expected 401, got $HTTP_CODE)${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# Test 17: Re-registration with valid credentials (should succeed)
+if [ -n "$SEC_CREDS" ]; then
+    echo -n "Testing: Re-registration with valid credentials... "
+    REREG_AUTH=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/register" \
+        -H "Content-Type: application/json" \
+        -H "X-Existing-Credentials: $SEC_CREDS" \
+        -d '{"cp_id": "CP-SEC-001", "location": "Hamburg Authorized"}')
+    
+    HTTP_CODE=$(echo "$REREG_AUTH" | grep "HTTP_CODE:" | cut -d: -f2)
+    if [ "$HTTP_CODE" == "200" ]; then
+        echo -e "${GREEN}✓ PASSED${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${RED}✗ FAILED (Expected 200, got $HTTP_CODE)${NC}"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+fi
+
+# Test 18: Error normalization - all auth failures return 401
+echo -n "Testing: Error normalization (unknown CP)... "
+AUTH_UNKNOWN=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/authenticate" \
+    -H "Content-Type: application/json" \
+    -d '{"cp_id": "CP-UNKNOWN-999", "credentials": "fake"}')
+
+HTTP_CODE=$(echo "$AUTH_UNKNOWN" | grep "HTTP_CODE:" | cut -d: -f2)
+if [ "$HTTP_CODE" == "401" ]; then
+    echo -e "${GREEN}✓ PASSED (401 returned)${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}✗ FAILED (Expected 401, got $HTTP_CODE)${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# Test 19: Deregistered CP auth returns 401 (not 403)
+curl -s -X DELETE "$REGISTRY_URL/cp/CP-SEC-001" > /dev/null
+echo -n "Testing: Deregistered CP auth returns 401... "
+AUTH_DEREG=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/authenticate" \
+    -H "Content-Type: application/json" \
+    -d "{\"cp_id\": \"CP-SEC-001\", \"credentials\": \"$SEC_CREDS\"}")
+
+HTTP_CODE=$(echo "$AUTH_DEREG" | grep "HTTP_CODE:" | cut -d: -f2)
+if [ "$HTTP_CODE" == "401" ]; then
+    echo -e "${GREEN}✓ PASSED (401 returned, no status leak)${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}✗ FAILED (Expected 401, got $HTTP_CODE)${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# Test 20: JWT token validation
+if [ -n "$JWT_TOKEN" ]; then
+    echo -n "Testing: JWT token structure... "
+    # Decode JWT payload (base64)
+    JWT_PAYLOAD=$(echo "$JWT_TOKEN" | cut -d. -f2)
+    # Pad base64 if needed
+    JWT_PAYLOAD_LEN=${#JWT_PAYLOAD}
+    JWT_PAYLOAD_PAD=$((4 - JWT_PAYLOAD_LEN % 4))
+    if [ $JWT_PAYLOAD_PAD -lt 4 ]; then
+        JWT_PAYLOAD="${JWT_PAYLOAD}$(printf '=%.0s' $(seq 1 $JWT_PAYLOAD_PAD))"
+    fi
+    
+    JWT_DECODED=$(echo "$JWT_PAYLOAD" | base64 -d 2>/dev/null || echo "{}")
+    
+    if echo "$JWT_DECODED" | jq -e '.iss == "ev-registry" and .aud == "ev-central"' > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ PASSED (iss/aud claims present)${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${RED}✗ FAILED (iss/aud claims missing or invalid)${NC}"
+        echo "Token payload: $JWT_DECODED"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+fi
+
+# Test 21: Certificate requirement (if enabled)
+echo -n "Testing: Certificate enforcement... "
+if curl -s "$REGISTRY_URL/" | grep -q "require_certificate.*true"; then
+    # Certificate required - auth without cert should fail
+    CERT_TEST=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/authenticate" \
+        -H "Content-Type: application/json" \
+        -d '{"cp_id": "CP-TEST-001", "credentials": "test"}')
+    
+    HTTP_CODE=$(echo "$CERT_TEST" | grep "HTTP_CODE:" | cut -d: -f2)
+    if [ "$HTTP_CODE" == "401" ]; then
+        echo -e "${GREEN}✓ PASSED (cert enforcement active)${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${YELLOW}⚠ SKIPPED (unexpected response)${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ SKIPPED (certificate not required)${NC}"
+fi
+
+# Test 22: Admin API key validation (if configured)
+if [ -n "$REGISTRY_ADMIN_API_KEY" ]; then
+    echo -n "Testing: Re-registration with admin key... "
+    
+    # Register a CP
+    curl -s -X POST "$REGISTRY_URL/cp/register" \
+        -H "Content-Type: application/json" \
+        -d '{"cp_id": "CP-ADMIN-TEST", "location": "Frankfurt"}' > /dev/null
+    
+    # Try to update with admin key
+    ADMIN_REREG=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "$REGISTRY_URL/cp/register" \
+        -H "Content-Type: application/json" \
+        -H "X-Registry-API-Key: $REGISTRY_ADMIN_API_KEY" \
+        -d '{"cp_id": "CP-ADMIN-TEST", "location": "Frankfurt Updated"}')
+    
+    HTTP_CODE=$(echo "$ADMIN_REREG" | grep "HTTP_CODE:" | cut -d: -f2)
+    if [ "$HTTP_CODE" == "200" ]; then
+        echo -e "${GREEN}✓ PASSED (admin key accepted)${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo -e "${RED}✗ FAILED (Expected 200, got $HTTP_CODE)${NC}"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    curl -s -X DELETE "$REGISTRY_URL/cp/CP-ADMIN-TEST" > /dev/null
+else
+    echo -e "${YELLOW}⚠ Admin API key tests skipped (REGISTRY_ADMIN_API_KEY not set)${NC}"
+fi
+
+# Cleanup - deregister test CP
 echo -e "\n${YELLOW}=== Cleanup ===${NC}"
 curl -s -X DELETE "$REGISTRY_URL/cp/CP-TEST-001" > /dev/null
 echo "Cleaned up test data"

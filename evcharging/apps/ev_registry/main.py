@@ -20,7 +20,7 @@ from loguru import logger
 
 from evcharging.common.config import RegistryConfig
 from evcharging.common.database import CPRegistryDB
-from evcharging.common.security import SecurityManager, create_security_manager
+from evcharging.common.security import SecurityManager, create_security_manager, validate_admin_key
 from evcharging.common.utils import utc_now
 
 
@@ -155,7 +155,9 @@ def create_app(config: RegistryConfig) -> FastAPI:
     db = CPRegistryDB(config.db_path)
     security_mgr = create_security_manager(
         secret_key=config.secret_key,
-        token_expiration_hours=config.token_expiration_hours
+        token_expiration_hours=config.token_expiration_hours,
+        jwt_issuer=config.jwt_issuer,
+        jwt_audience=config.jwt_audience
     )
     
     # Store in app state
@@ -163,9 +165,23 @@ def create_app(config: RegistryConfig) -> FastAPI:
     app.state.security = security_mgr
     app.state.config = config
     
+    # Security validation
+    if config.tls_enabled and (not config.tls_cert_file or not config.tls_key_file):
+        if not config.allow_insecure:
+            logger.error("TLS is enabled but certificate files not provided. Set allow_insecure=true for dev only.")
+            raise ValueError("TLS configuration incomplete")
+        else:
+            logger.warning("⚠️  Running in INSECURE mode - TLS disabled. DO NOT USE IN PRODUCTION!")
+    
+    if not config.tls_enabled and not config.allow_insecure:
+        logger.error("TLS is disabled but allow_insecure is false. Enable TLS or set allow_insecure=true.")
+        raise ValueError("Secure transport required - enable TLS or explicitly allow insecure mode")
+    
     logger.info(f"Initialized EV Registry with database: {config.db_path}")
     logger.info(f"TLS enabled: {config.tls_enabled}")
+    logger.info(f"Certificate authentication required: {config.require_certificate}")
     logger.info(f"Token expiration: {config.token_expiration_hours} hours")
+    logger.info(f"JWT issuer: {config.jwt_issuer}, audience: {config.jwt_audience}")
     
     # ========== Endpoints ==========
     
@@ -185,19 +201,77 @@ def create_app(config: RegistryConfig) -> FastAPI:
         status_code=status.HTTP_200_OK,
         tags=["Registration"]
     )
-    async def register_cp(request: CPRegisterRequest):
+    async def register_cp(
+        request: CPRegisterRequest,
+        x_registry_api_key: Optional[str] = Header(None, alias=config.api_key_header),
+        x_existing_credentials: Optional[str] = Header(None, description="Existing credentials for re-registration")
+    ):
         """
-        Register a new charging point.
+        Register a new charging point or re-register existing CP.
         
         - Validates CP ID and location
         - Generates secure credentials
         - Stores CP information in registry database
         - Returns credentials and access token
         
-        **Security**: Credentials are returned only once during registration.
-        Store them securely - they cannot be retrieved later.
+        **Security**: 
+        - Credentials are returned only once during registration
+        - Re-registration requires either existing credentials OR admin API key
+        - Store credentials securely - they cannot be retrieved later
+        
+        **Re-registration Protection**:
+        To update an existing CP, provide EITHER:
+        - `X-Existing-Credentials` header with current credentials, OR
+        - `X-Registry-API-Key` header with admin key (if configured)
         """
         try:
+            # Validate input
+            if not security_mgr.validate_cp_id(request.cp_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid CP ID format. Must be 3-64 alphanumeric characters, hyphens, or underscores."
+                )
+            
+            if not security_mgr.validate_location(request.location):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid location. Must be 2-256 characters."
+                )
+            
+            # Check if CP already exists
+            existing_cp = db.get_cp(request.cp_id)
+            is_reregistration = existing_cp is not None
+            
+            if is_reregistration:
+                # RE-REGISTRATION: Require proof of ownership
+                logger.info(f"Re-registration attempt for existing CP: {request.cp_id}")
+                
+                # Option 1: Verify existing credentials
+                credentials_verified = False
+                if x_existing_credentials:
+                    stored_hash = db.get_cp_credentials(request.cp_id)
+                    if stored_hash and security_mgr.verify_credentials(x_existing_credentials, stored_hash):
+                        credentials_verified = True
+                        logger.info(f"Re-registration authorized via existing credentials for {request.cp_id}")
+                
+                # Option 2: Verify admin API key
+                admin_authorized = False
+                if x_registry_api_key:
+                    if validate_admin_key(x_registry_api_key, config.admin_api_key):
+                        admin_authorized = True
+                        logger.info(f"Re-registration authorized via admin key for {request.cp_id}")
+                
+                # Reject if neither authorization method succeeded
+                if not credentials_verified and not admin_authorized:
+                    logger.warning(
+                        f"Unauthorized re-registration attempt for {request.cp_id} - "
+                        "no valid credentials or admin key provided"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Re-registration requires existing credentials (X-Existing-Credentials header) "
+                               "or admin authorization (X-Registry-API-Key header)"
+                    )
             # Validate input
             if not security_mgr.validate_cp_id(request.cp_id):
                 raise HTTPException(
@@ -222,11 +296,18 @@ def create_app(config: RegistryConfig) -> FastAPI:
                     cert_fingerprint = security_mgr.extract_certificate_fingerprint(
                         request.certificate_pem
                     )
+                    logger.info(f"Certificate fingerprint extracted for {request.cp_id}")
                 except ValueError as e:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Invalid certificate: {str(e)}"
                     )
+            elif config.require_certificate:
+                # Certificate is required but not provided
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Client certificate is required for registration"
+                )
             
             # Store metadata as JSON
             metadata_json = None
@@ -257,9 +338,10 @@ def create_app(config: RegistryConfig) -> FastAPI:
             
             registration_date = utc_now().isoformat()
             
+            action = "re-registered" if is_reregistration else "registered"
             logger.info(
-                f"CP registered: {request.cp_id} at {request.location} "
-                f"(new={is_new}, cert={cert_fingerprint is not None})"
+                f"CP {action}: {request.cp_id} at {request.location} "
+                f"(cert={cert_fingerprint is not None})"
             )
             
             return CPRegisterResponse(
@@ -328,33 +410,42 @@ def create_app(config: RegistryConfig) -> FastAPI:
         status_code=status.HTTP_200_OK,
         tags=["Authentication"]
     )
-    async def authenticate_cp(request: CPAuthenticateRequest):
+    async def authenticate_cp(
+        request: CPAuthenticateRequest,
+        x_client_cert_fingerprint: Optional[str] = Header(None, description="Client certificate fingerprint (if required)")
+    ):
         """
         Authenticate a charging point using credentials.
         
         - Validates CP ID and credentials
+        - Verifies certificate fingerprint if required
         - Returns new access token if successful
         - Updates last authentication timestamp
         
-        **Returns 401** if credentials are invalid or CP is deregistered.
+        **Returns 401** for any authentication failure (normalized error response).
+        
+        **Certificate Authentication**:
+        If certificate authentication is required, provide the SHA-256 fingerprint
+        in the `X-Client-Cert-Fingerprint` header.
         """
         try:
             # Get CP from database
             cp_info = db.get_cp(request.cp_id)
             
+            # Normalize all auth failures to 401 to prevent information leakage
             if not cp_info:
-                logger.warning(f"Authentication failed: CP {request.cp_id} not found")
+                logger.warning(f"Authentication failed: unknown CP {request.cp_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid credentials or CP not registered"
+                    detail="Authentication failed"
                 )
             
-            # Check if CP is deregistered
+            # Check if CP is deregistered (still use 401, not 403)
             if cp_info['status'] != 'REGISTERED':
                 logger.warning(f"Authentication failed: CP {request.cp_id} is {cp_info['status']}")
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="CP is deregistered and cannot authenticate"
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication failed"
                 )
             
             # Verify credentials
@@ -363,15 +454,50 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 logger.error(f"Authentication failed: No credentials found for {request.cp_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid credentials or CP not registered"
+                    detail="Authentication failed"
                 )
             
             if not security_mgr.verify_credentials(request.credentials, credentials_hash):
                 logger.warning(f"Authentication failed: Invalid credentials for {request.cp_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid credentials or CP not registered"
+                    detail="Authentication failed"
                 )
+            
+            # Enforce certificate requirement if configured
+            if config.require_certificate:
+                stored_fingerprint = cp_info.get('certificate_fingerprint')
+                
+                if not stored_fingerprint:
+                    logger.error(
+                        f"Authentication failed: Certificate required but not registered for {request.cp_id}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication failed"
+                    )
+                
+                if not x_client_cert_fingerprint:
+                    logger.warning(
+                        f"Authentication failed: Certificate required but not provided for {request.cp_id}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication failed"
+                    )
+                
+                # Normalize fingerprint format (remove colons, uppercase)
+                provided_fp = x_client_cert_fingerprint.replace(":", "").upper()
+                stored_fp = stored_fingerprint.replace(":", "").upper()
+                
+                if provided_fp != stored_fp:
+                    logger.warning(
+                        f"Authentication failed: Certificate fingerprint mismatch for {request.cp_id}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication failed"
+                    )
             
             # Update last authenticated timestamp
             db.update_last_authenticated(request.cp_id)

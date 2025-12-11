@@ -26,16 +26,29 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 class SecurityManager:
     """Manages security operations for CP registry and authentication."""
     
-    def __init__(self, secret_key: str, token_expiration_hours: int = 24):
+    def __init__(
+        self,
+        secret_key: str,
+        token_expiration_hours: int = 24,
+        jwt_issuer: str = "ev-registry",
+        jwt_audience: str = "ev-central"
+    ):
         """
         Initialize security manager.
         
         Args:
             secret_key: Secret key for JWT signing
             token_expiration_hours: Token validity duration
+            jwt_issuer: JWT issuer claim
+            jwt_audience: JWT audience claim
         """
+        if len(secret_key) < 32:
+            raise ValueError("Secret key must be at least 32 characters")
+        
         self.secret_key = secret_key
         self.token_expiration_hours = token_expiration_hours
+        self.jwt_issuer = jwt_issuer
+        self.jwt_audience = jwt_audience
         self.algorithm = "HS256"
     
     @staticmethod
@@ -104,6 +117,8 @@ class SecurityManager:
         claims = {
             "sub": cp_id,
             "type": "cp_access",
+            "iss": self.jwt_issuer,
+            "aud": self.jwt_audience,
             "iat": int(now.timestamp()),
             "exp": int(expire.timestamp()),
             "nbf": int(now.timestamp())
@@ -131,7 +146,17 @@ class SecurityManager:
             payload = jwt.decode(
                 token,
                 self.secret_key,
-                algorithms=[self.algorithm]
+                algorithms=[self.algorithm],
+                issuer=self.jwt_issuer,
+                audience=self.jwt_audience,
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "verify_iat": True,
+                    "verify_aud": True,
+                    "verify_iss": True
+                }
             )
             
             # Verify token type
@@ -220,15 +245,41 @@ class SecurityManager:
         return 2 <= len(location) <= 256
 
 
-def create_security_manager(secret_key: str, token_expiration_hours: int = 24) -> SecurityManager:
+def create_security_manager(
+    secret_key: str,
+    token_expiration_hours: int = 24,
+    jwt_issuer: str = "ev-registry",
+    jwt_audience: str = "ev-central"
+) -> SecurityManager:
     """
     Factory function to create a SecurityManager instance.
     
     Args:
         secret_key: Secret key for JWT signing
         token_expiration_hours: Token validity duration
+        jwt_issuer: JWT issuer claim
+        jwt_audience: JWT audience claim
         
     Returns:
         Configured SecurityManager instance
     """
-    return SecurityManager(secret_key, token_expiration_hours)
+    return SecurityManager(secret_key, token_expiration_hours, jwt_issuer, jwt_audience)
+
+
+def validate_admin_key(provided_key: Optional[str], expected_key: Optional[str]) -> bool:
+    """
+    Validate admin API key in constant time.
+    
+    Args:
+        provided_key: Key provided in request
+        expected_key: Expected admin key from config
+        
+    Returns:
+        True if keys match
+    """
+    if not expected_key or not provided_key:
+        return False
+    
+    # Constant-time comparison to prevent timing attacks
+    import hmac
+    return hmac.compare_digest(provided_key, expected_key)

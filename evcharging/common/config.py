@@ -91,19 +91,22 @@ class RegistryConfig(BaseSettings):
     db_path: str = Field(default="ev_charging.db", description="Database file path")
     log_level: str = Field(default="INFO", description="Logging level")
     
-    # TLS/SSL Configuration
-    tls_enabled: bool = Field(default=False, description="Enable HTTPS/TLS")
+    # TLS/SSL Configuration (MANDATORY for production)
+    tls_enabled: bool = Field(default=True, description="Enable HTTPS/TLS (REQUIRED for production)")
     tls_cert_file: Optional[str] = Field(default=None, description="Path to TLS certificate file")
     tls_key_file: Optional[str] = Field(default=None, description="Path to TLS private key file")
+    allow_insecure: bool = Field(default=False, description="Allow insecure HTTP (dev only - DO NOT USE IN PRODUCTION)")
     
     # Security Settings
     token_expiration_hours: int = Field(default=24, description="Authentication token expiration in hours")
-    secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for token signing")
+    secret_key: str = Field(..., description="Secret key for token signing (REQUIRED - must be strong random value)")
+    jwt_issuer: str = Field(default="ev-registry", description="JWT issuer claim")
+    jwt_audience: str = Field(default="ev-central", description="JWT audience claim")
     require_certificate: bool = Field(default=False, description="Require client certificates for authentication")
     
     # API Security
     api_key_header: str = Field(default="X-Registry-API-Key", description="API key header name")
-    admin_api_key: Optional[str] = Field(default=None, description="Admin API key for management endpoints")
+    admin_api_key: Optional[str] = Field(default=None, description="Admin API key for management endpoints (required for re-registration)")
     
     model_config = SettingsConfigDict(
         env_prefix="REGISTRY_",
