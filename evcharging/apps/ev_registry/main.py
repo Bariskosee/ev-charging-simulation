@@ -272,18 +272,6 @@ def create_app(config: RegistryConfig) -> FastAPI:
                         detail="Re-registration requires existing credentials (X-Existing-Credentials header) "
                                "or admin authorization (X-Registry-API-Key header)"
                     )
-            # Validate input
-            if not security_mgr.validate_cp_id(request.cp_id):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid CP ID format. Must be 3-64 alphanumeric characters, hyphens, or underscores."
-                )
-            
-            if not security_mgr.validate_location(request.location):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid location. Must be 2-256 characters."
-                )
             
             # Generate credentials
             credentials = security_mgr.generate_credentials(32)
