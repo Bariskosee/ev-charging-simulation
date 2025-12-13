@@ -337,10 +337,82 @@ class CPSecurityService:
         
         CPEncryptionService.initialize_key_wrapping(wrapping_secret)
         
-        # Check for keys needing migration
-        self._check_key_migration_needed()
+        # Auto-migrate legacy keys on startup
+        self._auto_migrate_legacy_keys()
         
         logger.info("CP Security Service initialized")
+    
+    def _auto_migrate_legacy_keys(self) -> None:
+        """
+        Automatically migrate legacy keys during service initialization.
+        Legacy keys have key_hash but no encrypted_key (pre-wrapping format).
+        
+        This ensures all active CPs can encrypt/decrypt immediately after startup
+        without manual intervention.
+        """
+        try:
+            unmigrated_cps = self.security_db.get_unmigrated_keys()
+            
+            if not unmigrated_cps:
+                logger.debug("No legacy keys requiring migration")
+                return
+            
+            logger.info(
+                f"Starting automatic key migration for {len(unmigrated_cps)} CP(s): {unmigrated_cps}"
+            )
+            
+            migration_success = []
+            migration_failed = []
+            
+            for cp_id in unmigrated_cps:
+                try:
+                    # Check if CP exists in registry
+                    cp_record = self.registry_db.get_cp(cp_id)
+                    if not cp_record:
+                        logger.warning(
+                            f"Skipping migration for {cp_id}: Not found in registry. "
+                            "CP must be re-registered before key can be migrated."
+                        )
+                        migration_failed.append((cp_id, "Not in registry"))
+                        continue
+                    
+                    # Get current security status
+                    security_status = self.security_db.get_cp_security_status(cp_id)
+                    status_str = security_status['registration_status'] if security_status else 'UNKNOWN'
+                    
+                    # Force reset to wrap legacy key
+                    # This temporarily allows key generation even if not ACTIVE
+                    success = self.reset_key_for_cp(cp_id, force=True)
+                    
+                    if success:
+                        logger.info(
+                            f"✓ Migrated legacy key for CP {cp_id} (status: {status_str})"
+                        )
+                        migration_success.append(cp_id)
+                    else:
+                        logger.error(f"✗ Failed to migrate key for CP {cp_id}")
+                        migration_failed.append((cp_id, "Reset failed"))
+                
+                except Exception as e:
+                    logger.error(f"✗ Exception migrating key for CP {cp_id}: {e}")
+                    migration_failed.append((cp_id, str(e)))
+            
+            # Summary
+            if migration_success:
+                logger.info(
+                    f"Key migration completed: {len(migration_success)} successful, "
+                    f"{len(migration_failed)} failed"
+                )
+            
+            if migration_failed:
+                logger.warning(
+                    f"Key migration failures: {migration_failed}. "
+                    "These CPs will not be able to encrypt/decrypt until manually fixed."
+                )
+        
+        except Exception as e:
+            logger.error(f"Failed to run key migration: {e}")
+            # Don't fail startup - just log the error
     
     def _check_key_migration_needed(self) -> None:
         """

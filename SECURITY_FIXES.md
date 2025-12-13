@@ -73,40 +73,37 @@ cp_security.generate_key_for_cp("REVOKED-CP")
 
 **Fix Implemented:**
 - Added `get_unmigrated_keys()` method to detect keys needing migration
-- Added migration detection during service initialization
-- Clear warning logs guide administrators to fix unmigrated keys
-- `reset_key_for_cp(force=True)` can re-wrap keys even for non-ACTIVE CPs
-- `get_key_for_cp()` fails gracefully with actionable error message
+- **Automatic migration during service initialization** wraps legacy keys on startup
+- Clear info/warning logs provide audit trail for migrations
+- `reset_key_for_cp(force=True)` enables manual migration if needed
+- `get_key_for_cp()` fails gracefully with actionable error message if migration fails
 
 **Code Changes:**
 - `CPSecurityDB.get_unmigrated_keys()`: Finds CPs with `key_hash` but no `encrypted_key`
-- `CPSecurityService._check_key_migration_needed()`: Called during initialization
+- `CPSecurityService._auto_migrate_legacy_keys()`: Automatically wraps legacy keys on startup
 - `get_key_for_cp()`: Returns None with guidance if key needs migration
 
 **Verification:**
 ```python
-# Migration detection finds unmigrated keys
-unmigrated = security_db.get_unmigrated_keys()
-# Returns: ["OLD-CP-NO-WRAP"]
+# Create legacy keys (only key_hash, no encrypted_key)
+for cp_id in ["LEGACY-CP-001", "LEGACY-CP-002", "LEGACY-CP-003"]:
+    security_db.store_encryption_key(cp_id, "hash", encrypted_key=None)
 
-# Attempting to use unmigrated key logs clear guidance
-key = cp_security.get_key_for_cp("OLD-CP-NO-WRAP")
-# Logs: "Call reset_key_for_cp(cp_id, force=True) to re-wrap the key"
+# Service initialization automatically migrates all legacy keys
+cp_security = CPSecurityService(...)
+# Logs: "Starting automatic key migration for 3 CP(s)"
+# Logs: "✓ Migrated legacy key for CP LEGACY-CP-001 (status: ACTIVE)"
+# Logs: "Key migration completed: 3 successful, 0 failed"
+
+# All CPs immediately ready for encrypted communication
+unmigrated = security_db.get_unmigrated_keys()  # Returns: []
 ```
 
-**Migration Steps:**
-```bash
-# For each unmigrated CP:
-1. Identify CPs: Check logs for "keys needing migration" warning
-2. Backup database before migration
-3. Run migration:
-   python -c "
-   from evcharging.common.cp_security import CPSecurityService
-   # Initialize service
-   cp_security.reset_key_for_cp('CP-ID', force=True)
-   "
-4. Verify: Check logs for "Reset encryption key for CP"
-```
+**Operational Benefits:**
+- **Zero manual intervention** required after upgrade
+- CPs ready for encrypted communication immediately on startup
+- Complete audit trail in logs for compliance
+- Failed migrations logged with clear guidance
 
 ---
 
@@ -241,7 +238,7 @@ python -m evcharging.apps.ev_central.main
 
 ### Existing Installation Migration
 
-If upgrading from a previous version:
+If upgrading from a previous version with legacy keys:
 
 1. **Stop EV_Central**
    ```bash
@@ -249,18 +246,15 @@ If upgrading from a previous version:
    docker compose down ev-central
    ```
 
-2. **Set Environment Variable**
+2. **Backup Database**
+   ```bash
+   cp ev_charging.db ev_charging.db.backup
+   ```
+
+3. **Set Environment Variable**
    ```bash
    # Add to docker-compose.yml or .env file
    EV_KEY_ENCRYPTION_SECRET=your-secure-secret-min-32-chars
-   ```
-
-3. **Update Database Schema** (if needed)
-   ```python
-   # Run migration script
-   from evcharging.common.database import CPSecurityDB
-   db = CPSecurityDB("ev_charging.db")
-   # Schema is auto-updated on next connection
    ```
 
 4. **Start EV_Central**
@@ -268,18 +262,17 @@ If upgrading from a previous version:
    docker compose up -d ev-central
    ```
 
-5. **Check Logs for Migration Warnings**
+5. **Verify Auto-Migration in Logs**
    ```bash
-   docker compose logs ev-central | grep "migration"
+   docker compose logs ev-central | grep -E "migration|Migrated"
+   
+   # Expected output:
+   # INFO - Starting automatic key migration for X CP(s): [...]
+   # INFO - ✓ Migrated legacy key for CP XXX (status: ACTIVE)
+   # INFO - Key migration completed: X successful, 0 failed
    ```
 
-6. **Migrate Keys (if needed)**
-   ```python
-   # For each CP that needs migration:
-   from evcharging.common.cp_security import CPSecurityService
-   # ... initialize service ...
-   cp_security.reset_key_for_cp('CP-ID', force=True)
-   ```
+**Migration is fully automatic** - no manual key reset needed. The service detects legacy keys on startup and wraps them automatically.
 
 ---
 
@@ -347,8 +340,9 @@ If upgrading from a previous version:
 ### Key Metrics to Monitor
 
 1. **Migration Status**
-   - Check logs for "keys needing migration" warnings
-   - Track count of unmigrated keys over time
+   - Check logs for "Starting automatic key migration" on startup
+   - Track successful vs. failed migrations
+   - Monitor for "Key migration completed" summary
 
 2. **Key Operations**
    - Monitor key generation failures (indicates misconfigured CPs)
@@ -362,7 +356,10 @@ If upgrading from a previous version:
 
 ```
 INFO  - Key wrapping initialized with dedicated secret
-WARN  - Found X CP(s) with keys needing migration: [...]
+INFO  - Starting automatic key migration for X CP(s): [...]
+INFO  - ✓ Migrated legacy key for CP XXX (status: ACTIVE)
+INFO  - Key migration completed: X successful, Y failed
+WARN  - Skipping migration for XXX: Not found in registry
 ERROR - Key generation validation failed: CP not found in registry
 ERROR - Key unwrapping failed: cp_id may not match
 ```
