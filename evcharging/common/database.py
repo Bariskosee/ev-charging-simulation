@@ -133,6 +133,7 @@ class FaultHistoryDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     cp_id TEXT NOT NULL UNIQUE,
                     key_hash TEXT NOT NULL,
+                    encrypted_key TEXT,
                     key_created_at TEXT NOT NULL,
                     key_rotated_at TEXT,
                     key_version INTEGER NOT NULL DEFAULT 1,
@@ -702,13 +703,14 @@ class CPSecurityDB:
     
     # ==================== Encryption Key Management ====================
     
-    def store_encryption_key(self, cp_id: str, key_hash: str) -> bool:
+    def store_encryption_key(self, cp_id: str, key_hash: str, encrypted_key: Optional[str] = None) -> bool:
         """
         Store a new encryption key for a CP.
         
         Args:
             cp_id: Charging point identifier
-            key_hash: Hash of the encryption key (NEVER store plaintext)
+            key_hash: Hash of the encryption key
+            encrypted_key: Wrapped (encrypted) key for secure storage
             
         Returns:
             True if stored successfully
@@ -727,17 +729,17 @@ class CPSecurityDB:
                 new_version = existing['key_version'] + 1
                 cursor.execute("""
                     UPDATE cp_encryption_keys
-                    SET key_hash = ?, key_rotated_at = ?, key_version = ?, 
+                    SET key_hash = ?, encrypted_key = ?, key_rotated_at = ?, key_version = ?, 
                         updated_at = ?, status = 'ACTIVE'
                     WHERE cp_id = ?
-                """, (key_hash, timestamp, new_version, timestamp, cp_id))
+                """, (key_hash, encrypted_key, timestamp, new_version, timestamp, cp_id))
             else:
                 # Insert new key
                 cursor.execute("""
                     INSERT INTO cp_encryption_keys 
-                    (cp_id, key_hash, key_created_at, key_version, status, updated_at)
-                    VALUES (?, ?, ?, 1, 'ACTIVE', ?)
-                """, (cp_id, key_hash, timestamp, timestamp))
+                    (cp_id, key_hash, encrypted_key, key_created_at, key_version, status, updated_at)
+                    VALUES (?, ?, ?, ?, 1, 'ACTIVE', ?)
+                """, (cp_id, key_hash, encrypted_key, timestamp, timestamp))
             
             conn.commit()
             return True
@@ -794,18 +796,38 @@ class CPSecurityDB:
             cp_id: Charging point identifier
             
         Returns:
-            Dictionary with key metadata or None
+            Dictionary with key metadata (including encrypted_key) or None
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT cp_id, key_created_at, key_rotated_at, key_version, status, updated_at
+                SELECT cp_id, key_hash, encrypted_key, key_created_at, key_rotated_at, 
+                       key_version, status, updated_at
                 FROM cp_encryption_keys
                 WHERE cp_id = ?
             """, (cp_id,))
             
             row = cursor.fetchone()
             return dict(row) if row else None
+    
+    def get_unmigrated_keys(self) -> list[str]:
+        """
+        Find CPs that have key_hash but no encrypted_key (need migration).
+        
+        Returns:
+            List of CP IDs that need key migration
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT cp_id
+                FROM cp_encryption_keys
+                WHERE key_hash IS NOT NULL 
+                  AND (encrypted_key IS NULL OR encrypted_key = '')
+                  AND status = 'ACTIVE'
+            """)
+            
+            return [row['cp_id'] for row in cursor.fetchall()]
     
     # ==================== CP Security Status Management ====================
     
@@ -874,6 +896,33 @@ class CPSecurityDB:
             
             row = cursor.fetchone()
             return dict(row) if row else None
+    
+    def set_registration_status(self, cp_id: str, status: str, reason: str = "") -> bool:
+        """
+        Set the registration status for a CP.
+        
+        Args:
+            cp_id: Charging point identifier
+            status: New status (ACTIVE, OUT_OF_SERVICE, REVOKED)
+            reason: Reason for status change
+            
+        Returns:
+            True if updated successfully
+        """
+        timestamp = utc_now().isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Update the registration status
+            cursor.execute("""
+                UPDATE cp_security_status
+                SET registration_status = ?, updated_at = ?
+                WHERE cp_id = ?
+            """, (status, timestamp, cp_id))
+            
+            conn.commit()
+            return cursor.rowcount > 0
     
     def record_successful_auth(self, cp_id: str):
         """

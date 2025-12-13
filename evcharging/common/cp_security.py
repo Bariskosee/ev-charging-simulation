@@ -12,6 +12,7 @@ Provides:
 import secrets
 import hashlib
 import json
+import os
 from typing import Optional, Dict, Tuple
 from enum import Enum
 from datetime import datetime
@@ -64,6 +65,39 @@ class CPEncryptionService:
     # AES-GCM provides authenticated encryption
     KEY_SIZE = 32  # 256 bits
     NONCE_SIZE = 12  # 96 bits (recommended for AES-GCM)
+    
+    # Key wrapping configuration (class-level)
+    _wrapping_key: Optional[bytes] = None
+    
+    @classmethod
+    def initialize_key_wrapping(cls, wrapping_secret: str) -> None:
+        """
+        Initialize key wrapping with a dedicated secret.
+        MUST be called before any key wrapping operations.
+        
+        Args:
+            wrapping_secret: Dedicated secret for key wrapping (min 32 chars)
+            
+        Raises:
+            ValueError: If secret is too short or missing
+        """
+        if not wrapping_secret:
+            raise ValueError(
+                "EV_KEY_ENCRYPTION_SECRET is required but not set. "
+                "Key wrapping requires a dedicated secret (minimum 32 characters). "
+                "DO NOT reuse the JWT signing secret."
+            )
+        
+        if len(wrapping_secret) < 32:
+            raise ValueError(
+                f"Key wrapping secret is too short ({len(wrapping_secret)} chars). "
+                "Minimum 32 characters required for security."
+            )
+        
+        # Derive wrapping key from secret
+        salt = b'ev-central-key-wrapping-v1'  # Fixed salt for deterministic key derivation
+        cls._wrapping_key = cls.derive_key_from_secret(wrapping_secret, salt)
+        logger.info("Key wrapping initialized with dedicated secret")
     
     @staticmethod
     def generate_key() -> bytes:
@@ -171,6 +205,89 @@ class CPEncryptionService:
         except Exception as e:
             logger.error(f"Decryption failed: {e}")
             raise ValueError("Decryption failed - invalid key or corrupted data")
+    
+    @classmethod
+    def wrap_key(cls, key: bytes, cp_id: str) -> str:
+        """
+        Wrap (encrypt) a CP encryption key for secure storage.
+        Uses AES-GCM with cp_id as associated data to prevent key swapping.
+        
+        Args:
+            key: Raw encryption key to wrap
+            cp_id: CP identifier - used as AAD to bind wrapped key to specific CP
+            
+        Returns:
+            Base64-encoded wrapped key with nonce
+            
+        Raises:
+            ValueError: If key wrapping not initialized
+        """
+        if cls._wrapping_key is None:
+            raise ValueError(
+                "Key wrapping not initialized. "
+                "Call initialize_key_wrapping() with EV_KEY_ENCRYPTION_SECRET first."
+            )
+        
+        try:
+            aesgcm = AESGCM(cls._wrapping_key)
+            nonce = secrets.token_bytes(cls.NONCE_SIZE)
+            
+            # Use cp_id as associated data to bind wrapped key to this CP
+            # This prevents wrapped keys from being copied between CPs
+            aad = cp_id.encode('utf-8')
+            ciphertext = aesgcm.encrypt(nonce, key, aad)
+            
+            wrapped_data = nonce + ciphertext
+            import base64
+            return base64.b64encode(wrapped_data).decode('utf-8')
+        
+        except Exception as e:
+            logger.error(f"Key wrapping failed for CP {cp_id}: {e}")
+            raise ValueError(f"Key wrapping failed: {e}")
+    
+    @classmethod
+    def unwrap_key(cls, wrapped_key_b64: str, cp_id: str) -> bytes:
+        """
+        Unwrap (decrypt) a CP encryption key from storage.
+        Validates that cp_id matches the AAD used during wrapping.
+        
+        Args:
+            wrapped_key_b64: Base64-encoded wrapped key
+            cp_id: CP identifier - must match the AAD from wrapping
+            
+        Returns:
+            Raw encryption key bytes
+            
+        Raises:
+            ValueError: If unwrapping fails or cp_id doesn't match
+        """
+        if cls._wrapping_key is None:
+            raise ValueError(
+                "Key wrapping not initialized. "
+                "Call initialize_key_wrapping() with EV_KEY_ENCRYPTION_SECRET first."
+            )
+        
+        try:
+            import base64
+            wrapped_data = base64.b64decode(wrapped_key_b64)
+            
+            nonce = wrapped_data[:cls.NONCE_SIZE]
+            ciphertext = wrapped_data[cls.NONCE_SIZE:]
+            
+            # Must provide same cp_id used during wrapping
+            aad = cp_id.encode('utf-8')
+            
+            aesgcm = AESGCM(cls._wrapping_key)
+            key = aesgcm.decrypt(nonce, ciphertext, aad)
+            
+            return key
+        
+        except Exception as e:
+            logger.error(f"Key unwrapping failed for CP {cp_id}: {e}")
+            raise ValueError(
+                f"Key unwrapping failed for CP {cp_id}. "
+                "Key may be corrupted, cp_id may not match, or wrapping secret may have changed."
+            )
 
 
 class CPSecurityService:
@@ -194,6 +311,9 @@ class CPSecurityService:
             registry_db: Database for registry lookups
             security_manager: Security manager for token operations
             db_path: Path to database
+            
+        Raises:
+            ValueError: If EV_KEY_ENCRYPTION_SECRET is not properly configured
         """
         self.security_db = security_db
         self.registry_db = registry_db
@@ -204,7 +324,42 @@ class CPSecurityService:
         # WARNING: This is sensitive data, handle with care
         self._key_cache: Dict[str, bytes] = {}
         
+        # Initialize key wrapping with dedicated secret
+        wrapping_secret = os.environ.get("EV_KEY_ENCRYPTION_SECRET")
+        if not wrapping_secret:
+            raise ValueError(
+                "EV_KEY_ENCRYPTION_SECRET environment variable is required. \n"
+                "This secret is used to wrap/unwrap CP encryption keys in the database. \n"
+                "Generate a secure random secret (minimum 32 characters) and set it as an environment variable. \n"
+                "Example: export EV_KEY_ENCRYPTION_SECRET='your-secure-random-secret-min-32-chars' \n"
+                "DO NOT reuse the JWT signing secret (EV_SECURITY_SECRET)."
+            )
+        
+        CPEncryptionService.initialize_key_wrapping(wrapping_secret)
+        
+        # Check for keys needing migration
+        self._check_key_migration_needed()
+        
         logger.info("CP Security Service initialized")
+    
+    def _check_key_migration_needed(self) -> None:
+        """
+        Check if any existing keys need migration to wrapped format.
+        Logs warnings for keys that need attention.
+        """
+        try:
+            unmigrated_cps = self.security_db.get_unmigrated_keys()
+            if unmigrated_cps:
+                logger.warning(
+                    f"Found {len(unmigrated_cps)} CP(s) with keys needing migration: {unmigrated_cps}"
+                )
+                logger.warning(
+                    "These CPs have key_hash but no encrypted_key. "
+                    "They will need key reset before they can encrypt/decrypt. "
+                    "Consider running key migration or reset for these CPs."
+                )
+        except Exception as e:
+            logger.error(f"Failed to check key migration status: {e}")
     
     # ==================== Authentication ====================
     
@@ -358,27 +513,62 @@ class CPSecurityService:
     def generate_key_for_cp(self, cp_id: str) -> bool:
         """
         Generate a new encryption key for a CP.
+        Enforces registry existence and ACTIVE security status.
         
         Args:
             cp_id: Charging point identifier
             
         Returns:
             True if key generated successfully
+            
+        Raises:
+            ValueError: If CP not in registry or not ACTIVE
         """
         try:
-            # Generate secure random key
+            # 1. Verify CP exists in registry
+            cp_record = self.registry_db.get_cp(cp_id)
+            if not cp_record:
+                raise ValueError(
+                    f"Cannot generate key: CP {cp_id} not found in registry. "
+                    "CP must be registered in EV_Registry before key generation."
+                )
+            
+            # 2. Verify CP is registered (not deregistered)
+            if cp_record['status'] != 'REGISTERED':
+                raise ValueError(
+                    f"Cannot generate key: CP {cp_id} registry status is {cp_record['status']}. "
+                    "Only REGISTERED CPs can have keys generated."
+                )
+            
+            # 3. Verify security status is ACTIVE
+            security_status = self.security_db.get_cp_security_status(cp_id)
+            if security_status and security_status['registration_status'] != 'ACTIVE':
+                raise ValueError(
+                    f"Cannot generate key: CP {cp_id} security status is {security_status['registration_status']}. "
+                    "Only ACTIVE CPs can have keys generated. "
+                    "REVOKED CPs cannot be restored. OUT_OF_SERVICE CPs must be restored to ACTIVE first."
+                )
+            
+            # 4. Generate secure random key
             key = CPEncryptionService.generate_key()
             key_hash = CPEncryptionService.hash_key(key)
             
-            # Store hash in database
-            self.security_db.store_encryption_key(cp_id, key_hash)
+            # 5. Wrap key for secure storage (bound to cp_id)
+            wrapped_key = CPEncryptionService.wrap_key(key, cp_id)
             
-            # Cache the key in memory
+            # 6. Store wrapped key and hash in database
+            self.security_db.store_encryption_key(cp_id, key_hash, wrapped_key)
+            
+            # 7. Cache the key in memory
             self._key_cache[cp_id] = key
             
             logger.info(f"Generated encryption key for CP {cp_id}")
             return True
         
+        except ValueError as e:
+            # Re-raise validation errors
+            logger.error(f"Key generation validation failed for CP {cp_id}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to generate key for CP {cp_id}: {e}")
             return False
@@ -410,53 +600,142 @@ class CPSecurityService:
             logger.error(f"Failed to revoke key for CP {cp_id}: {e}")
             return False
     
-    def reset_key_for_cp(self, cp_id: str) -> bool:
+    def reset_key_for_cp(self, cp_id: str, force: bool = False) -> bool:
         """
         Reset (rotate) a CP's encryption key.
-        First revokes the old key, then generates a new one.
+        This revokes the old key and generates a new one.
         
         Args:
             cp_id: Charging point identifier
+            force: If True, skip registry/status checks (for migration/recovery)
             
         Returns:
             True if key reset successfully
+            
+        Raises:
+            ValueError: If CP not in registry or not ACTIVE (unless force=True)
         """
         try:
+            # Skip checks if force=True (for migration scenarios)
+            if not force:
+                # Verify CP exists in registry and is ACTIVE
+                cp_record = self.registry_db.get_cp(cp_id)
+                if not cp_record:
+                    raise ValueError(
+                        f"Cannot reset key: CP {cp_id} not found in registry."
+                    )
+                
+                security_status = self.security_db.get_cp_security_status(cp_id)
+                if security_status and security_status['registration_status'] not in ('ACTIVE', 'OUT_OF_SERVICE'):
+                    raise ValueError(
+                        f"Cannot reset key: CP {cp_id} security status is {security_status['registration_status']}. "
+                        "Only ACTIVE or OUT_OF_SERVICE CPs can have keys reset."
+                    )
+            else:
+                logger.warning(f"Forced key reset for CP {cp_id} - bypassing status checks")
+            
             # Revoke old key
             self.revoke_key_for_cp(cp_id)
             
-            # Generate new key
-            success = self.generate_key_for_cp(cp_id)
+            # For forced reset, temporarily allow key generation even if not strictly ACTIVE
+            # This is needed for migration scenarios
+            if force:
+                # Save current security status
+                original_status = self.security_db.get_cp_security_status(cp_id)
+                
+                # Temporarily set to ACTIVE if needed
+                if not original_status or original_status['registration_status'] != 'ACTIVE':
+                    self.security_db.set_registration_status(cp_id, 'ACTIVE', 'Temporary for key migration')
+                
+                try:
+                    # Generate key
+                    key = CPEncryptionService.generate_key()
+                    key_hash = CPEncryptionService.hash_key(key)
+                    wrapped_key = CPEncryptionService.wrap_key(key, cp_id)
+                    
+                    self.security_db.store_encryption_key(cp_id, key_hash, wrapped_key)
+                    self._key_cache[cp_id] = key
+                    success = True
+                finally:
+                    # Restore original status if we changed it
+                    if original_status and original_status['registration_status'] != 'ACTIVE':
+                        self.security_db.set_registration_status(
+                            cp_id,
+                            original_status['registration_status'],
+                            'Status restored after key migration'
+                        )
+            else:
+                # Normal path - let generate_key_for_cp do all checks
+                success = self.generate_key_for_cp(cp_id)
             
             if success:
                 logger.info(f"Reset encryption key for CP {cp_id}")
             
             return success
         
+        except ValueError as e:
+            logger.error(f"Key reset validation failed for CP {cp_id}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to reset key for CP {cp_id}: {e}")
             return False
     
     def get_key_for_cp(self, cp_id: str) -> Optional[bytes]:
         """
-        Get the encryption key for a CP.
+        Get encryption key for a CP (from cache or unwrap from storage).
         
         Args:
             cp_id: Charging point identifier
             
         Returns:
-            Encryption key bytes or None if not found
+            Encryption key or None if not available
         """
         # Check cache first
         if cp_id in self._key_cache:
             return self._key_cache[cp_id]
         
-        # Note: In production, keys should be loaded from secure storage (HSM, KMS, etc.)
-        # For this implementation, keys are generated on-demand and cached
-        logger.warning(f"Key for CP {cp_id} not in cache - generating new key")
-        self.generate_key_for_cp(cp_id)
+        # Try to retrieve and unwrap from database
+        key_info = self.security_db.get_key_info(cp_id)
+        if not key_info:
+            logger.error(
+                f"No encryption key found for CP {cp_id}. "
+                "Key must be generated via generate_key_for_cp() first."
+            )
+            return None
         
-        return self._key_cache.get(cp_id)
+        # Check if we have wrapped key
+        wrapped_key = key_info.get('encrypted_key')
+        if not wrapped_key:
+            logger.error(
+                f"CP {cp_id} has key_hash but no encrypted_key. "
+                "This key needs migration. Call reset_key_for_cp(cp_id, force=True) "
+                "to re-wrap the key."
+            )
+            return None
+        
+        # Unwrap the key (validates cp_id binding)
+        try:
+            key = CPEncryptionService.unwrap_key(wrapped_key, cp_id)
+            
+            # Verify hash matches (integrity check)
+            key_hash = CPEncryptionService.hash_key(key)
+            if key_hash != key_info['key_hash']:
+                logger.error(
+                    f"Key integrity check failed for CP {cp_id}. "
+                    "Unwrapped key hash doesn't match stored hash. "
+                    "Key may be corrupted."
+                )
+                return None
+            
+            # Cache for future use
+            self._key_cache[cp_id] = key
+            logger.debug(f"Unwrapped and cached key for CP {cp_id}")
+            
+            return key
+        
+        except ValueError as e:
+            logger.error(f"Failed to unwrap key for CP {cp_id}: {e}")
+            return None
     
     # ==================== Encryption Operations ====================
     
