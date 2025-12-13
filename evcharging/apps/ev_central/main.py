@@ -27,7 +27,9 @@ from evcharging.common.messages import (
 from evcharging.common.states import CPState, can_supply
 from evcharging.common.utils import utc_now, generate_id
 from evcharging.common.circuit_breaker import CircuitBreaker, CircuitState
-from evcharging.common.database import FaultHistoryDB
+from evcharging.common.database import FaultHistoryDB, CPSecurityDB, CPRegistryDB
+from evcharging.common.security import create_security_manager
+from evcharging.common.cp_security import CPSecurityService, CPSecurityStatus
 
 from evcharging.apps.ev_central.dashboard import create_dashboard_app
 from evcharging.apps.ev_central.tcp_server import TCPControlServer
@@ -61,6 +63,13 @@ class ChargingPoint:
         self.monitor_status: ChargingPoint.MonitorStatus = ChargingPoint.MonitorStatus.DOWN
         self.monitor_last_seen: datetime | None = None
         self.engine_status_known: bool = False
+        
+        # Security attributes
+        self.is_authenticated: bool = False
+        self.auth_token: str | None = None
+        self.security_status: CPSecurityStatus = CPSecurityStatus.ACTIVE
+        self.last_auth_time: datetime | None = None
+        self.has_encryption_key: bool = False
     
     def is_available(self) -> bool:
         """Check if CP is available for new charging session."""
@@ -68,7 +77,19 @@ class ChargingPoint:
         if self.circuit_breaker.get_state() == CircuitState.OPEN:
             return False
         
+        # Check security status
+        if self.security_status != CPSecurityStatus.ACTIVE:
+            return False
+        
         return can_supply(self.state) and self.current_driver is None and not self.is_faulty
+    
+    def is_security_authorized(self) -> bool:
+        """Check if CP is authorized from security perspective."""
+        return (
+            self.is_authenticated and 
+            self.security_status == CPSecurityStatus.ACTIVE and
+            self.has_encryption_key
+        )
 
     def record_monitor_heartbeat(self):
         """Record heartbeat received from monitor."""
@@ -89,6 +110,10 @@ class ChargingPoint:
             return "BROKEN"
         if self.engine_status_known and self.state in {CPState.FAULT, CPState.DISCONNECTED}:
             return "BROKEN"
+        if self.security_status == CPSecurityStatus.REVOKED:
+            return "REVOKED"
+        if self.security_status == CPSecurityStatus.OUT_OF_SERVICE:
+            return "OUT_OF_SERVICE"
         return "ON"
 
 
@@ -104,6 +129,30 @@ class EVCentralController:
         self._running = False
         self.db = FaultHistoryDB()  # Initialize database
         self.monitor_timeout = timedelta(seconds=5)
+        
+        # Security components
+        self.security_db = CPSecurityDB(config.db_url or "ev_charging.db")
+        self.registry_db = CPRegistryDB(config.db_url or "ev_charging.db")
+        
+        # Initialize security manager with secret key
+        # In production, load from secure config/environment
+        secret_key = os.environ.get("EV_SECURITY_SECRET", "dev-secret-key-change-in-production-min-32-chars!!!")
+        self.security_manager = create_security_manager(
+            secret_key=secret_key,
+            token_expiration_hours=24,
+            jwt_issuer="ev-registry",
+            jwt_audience="ev-central"
+        )
+        
+        # Initialize CP security service
+        self.cp_security = CPSecurityService(
+            security_db=self.security_db,
+            registry_db=self.registry_db,
+            security_manager=self.security_manager,
+            db_path=config.db_url or "ev_charging.db"
+        )
+        
+        logger.info("EV Central Controller initialized with security extensions")
     
     async def start(self):
         """Initialize and start the central controller."""
@@ -166,7 +215,176 @@ class EVCentralController:
         self.charging_points[cp_id].last_update = utc_now()
         self.charging_points[cp_id].record_monitor_heartbeat()
         
+        # Initialize security for this CP
+        self._initialize_cp_security(cp_id)
+        
         return True
+    
+    def _initialize_cp_security(self, cp_id: str):
+        """
+        Initialize security for a CP.
+        Ensures encryption key and security status exist.
+        
+        Args:
+            cp_id: Charging point identifier
+        """
+        try:
+            # Initialize security status
+            self.security_db.initialize_cp_security(cp_id)
+            
+            # Generate encryption key if not exists
+            key_info = self.security_db.get_key_info(cp_id)
+            if not key_info:
+                self.cp_security.generate_key_for_cp(cp_id)
+                logger.info(f"Generated encryption key for CP {cp_id}")
+            
+            # Update CP security attributes
+            if cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                security_status = self.cp_security.get_security_status(cp_id)
+                if security_status:
+                    cp.security_status = security_status
+                cp.has_encryption_key = True
+        
+        except Exception as e:
+            logger.error(f"Failed to initialize security for CP {cp_id}: {e}")
+    
+    def authenticate_cp_with_credentials(self, cp_id: str, credentials: str) -> bool:
+        """
+        Authenticate a CP using EV_Registry credentials.
+        
+        Args:
+            cp_id: Charging point identifier
+            credentials: Secret credentials from registration
+            
+        Returns:
+            True if authenticated and authorized
+        """
+        try:
+            auth_result = self.cp_security.authenticate_cp(cp_id, credentials)
+            
+            if not auth_result.success:
+                logger.warning(f"Authentication failed for CP {cp_id}: {auth_result.reason}")
+                return False
+            
+            # Update CP security state
+            if cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                cp.is_authenticated = True
+                cp.auth_token = auth_result.token
+                cp.security_status = auth_result.status
+                cp.last_auth_time = utc_now()
+                
+                logger.info(
+                    f"CP {cp_id} authenticated successfully "
+                    f"(status: {auth_result.status.value})"
+                )
+            
+            return auth_result.is_authorized()
+        
+        except Exception as e:
+            logger.error(f"Authentication error for CP {cp_id}: {e}")
+            return False
+    
+    def authenticate_cp_with_token(self, cp_id: str, token: str) -> bool:
+        """
+        Authenticate a CP using a JWT token.
+        
+        Args:
+            cp_id: Charging point identifier
+            token: JWT access token
+            
+        Returns:
+            True if authenticated and authorized
+        """
+        try:
+            auth_result = self.cp_security.verify_token(token)
+            
+            if not auth_result or auth_result.cp_id != cp_id:
+                logger.warning(f"Token verification failed for CP {cp_id}")
+                return False
+            
+            # Update CP security state
+            if cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                cp.is_authenticated = True
+                cp.auth_token = token
+                cp.security_status = auth_result.status
+                cp.last_auth_time = utc_now()
+            
+            return auth_result.is_authorized()
+        
+        except Exception as e:
+            logger.error(f"Token authentication error for CP {cp_id}: {e}")
+            return False
+    
+    def revoke_cp_access(self, cp_id: str, reason: str = "Manual revocation"):
+        """
+        Revoke a CP's access (CRITICAL SECURITY OPERATION).
+        
+        Args:
+            cp_id: Charging point identifier
+            reason: Reason for revocation
+        """
+        try:
+            # Revoke via security service
+            success = self.cp_security.revoke_cp(cp_id, reason)
+            
+            if success and cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                cp.security_status = CPSecurityStatus.REVOKED
+                cp.is_authenticated = False
+                cp.auth_token = None
+                
+                # If CP has active session, stop it
+                if cp.current_session:
+                    asyncio.create_task(
+                        self.send_stop_supply_command(cp_id, f"CP revoked: {reason}")
+                    )
+                
+                logger.warning(f"CP {cp_id} access REVOKED: {reason}")
+        
+        except Exception as e:
+            logger.error(f"Failed to revoke CP {cp_id}: {e}")
+    
+    def set_cp_out_of_service(self, cp_id: str, reason: str = "Maintenance"):
+        """
+        Mark a CP as out of service.
+        
+        Args:
+            cp_id: Charging point identifier
+            reason: Out-of-service reason
+        """
+        try:
+            success = self.cp_security.set_out_of_service(cp_id, reason)
+            
+            if success and cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                cp.security_status = CPSecurityStatus.OUT_OF_SERVICE
+                
+                logger.info(f"CP {cp_id} set to OUT_OF_SERVICE: {reason}")
+        
+        except Exception as e:
+            logger.error(f"Failed to set CP {cp_id} out of service: {e}")
+    
+    def restore_cp_to_active(self, cp_id: str):
+        """
+        Restore a CP from OUT_OF_SERVICE to ACTIVE.
+        
+        Args:
+            cp_id: Charging point identifier
+        """
+        try:
+            success = self.cp_security.restore_to_active(cp_id)
+            
+            if success and cp_id in self.charging_points:
+                cp = self.charging_points[cp_id]
+                cp.security_status = CPSecurityStatus.ACTIVE
+                
+                logger.info(f"CP {cp_id} restored to ACTIVE")
+        
+        except Exception as e:
+            logger.error(f"Failed to restore CP {cp_id}: {e}")
     
     async def mark_cp_faulty(self, cp_id: str, reason: str):
         """Mark a charging point as faulty and trigger the engine reaction."""
@@ -271,6 +489,19 @@ class EVCentralController:
             return
         
         cp = self.charging_points[request.cp_id]
+        
+        # Security check: Verify CP is authorized
+        if not cp.is_security_authorized():
+            logger.warning(
+                f"Driver request denied: CP {request.cp_id} not authorized "
+                f"(auth={cp.is_authenticated}, status={cp.security_status.value})"
+            )
+            await self._send_driver_update(
+                request,
+                MessageStatus.DENIED,
+                f"Charging point not authorized (status: {cp.security_status.value})"
+            )
+            return
         
         if not cp.is_available():
             await self._send_driver_update(
@@ -502,6 +733,9 @@ class EVCentralController:
                     "current_driver": cp.current_driver,
                     "last_update": cp.last_update.isoformat(),
                     "monitor_last_seen": cp.monitor_last_seen.isoformat() if cp.monitor_last_seen else None,
+                    "security_status": cp.security_status.value,
+                    "is_authenticated": cp.is_authenticated,
+                    "has_encryption_key": cp.has_encryption_key,
                     "telemetry": (
                         {
                             "kw": cp.last_telemetry.kw,
