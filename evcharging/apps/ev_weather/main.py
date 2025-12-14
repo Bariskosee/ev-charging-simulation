@@ -65,8 +65,8 @@ class EVWeatherController:
 
         temperature = data["main"]["temp"]
 
-        alert = temperature < 0 or temperature > 40
-
+        alert = temperature < 0
+        
         return WeatherState(
             city=city,
             temperature=temperature,
