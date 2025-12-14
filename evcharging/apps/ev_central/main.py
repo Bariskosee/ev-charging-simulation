@@ -131,6 +131,7 @@ class EVCentralController:
         self._running = False
         self.db = FaultHistoryDB()  # Initialize database
         self.monitor_timeout = timedelta(seconds=5)
+        self.weather_by_city: dict[str, dict] = {}
         
         # Security components
         self.security_db = CPSecurityDB(config.db_url or "ev_charging.db")
@@ -216,6 +217,8 @@ class EVCentralController:
         self.charging_points[cp_id].state = CPState.ACTIVATED
         self.charging_points[cp_id].last_update = utc_now()
         self.charging_points[cp_id].record_monitor_heartbeat()
+
+        self.weather_by_city.update({get_metadata(cp_id).city: None})
         
         # Initialize security for this CP
         self._initialize_cp_security(cp_id)
@@ -732,6 +735,8 @@ class EVCentralController:
                     "state": cp.get_display_state(),
                     "engine_state": cp.state.value,
                     "monitor_status": cp.monitor_status.value,
+                    "city": cp.city,
+                    "weather": self.weather_by_city.get(cp.city),
                     "current_driver": cp.current_driver,
                     "last_update": cp.last_update.isoformat(),
                     "monitor_last_seen": cp.monitor_last_seen.isoformat() if cp.monitor_last_seen else None,

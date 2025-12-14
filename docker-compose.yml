@@ -153,7 +153,7 @@ services:
       WEATHER_CITY_FILE=${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
       WEATHER_LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      kafka:
+      ev-central:
         condition: service_healthy
     networks:
       - evcharging-network

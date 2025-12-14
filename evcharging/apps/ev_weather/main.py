@@ -20,6 +20,7 @@ import httpx
 from datetime import datetime
 from evcharging.common.config import WeatherConfig
 
+@dataclass
 class WeatherState:
     """Data class to store information about a given city and its weather state"""
     city: str
@@ -89,7 +90,7 @@ class EVWeatherController:
             "alert": state.alert,
         }
 
-        await self._post("/weather/report", payload)
+        await self.post("/weather/report", payload)
         logger.info(f"Weather report sent for {state.city}")
 
     async def send_alert(self, state: WeatherState):
@@ -100,7 +101,7 @@ class EVWeatherController:
             "alert": True,
         }
 
-        await self._post("/weather/alert", payload)
+        await self.post("/weather/alert", payload)
         logger.warning(f"ALERT sent for {state.city}")
 
     async def send_cancel_alert(self, state: WeatherState):
@@ -111,7 +112,7 @@ class EVWeatherController:
             "alert": False,
         }
 
-        await self._post("/weather/cancel_alert", payload)
+        await self.post("/weather/cancel_alert", payload)
         logger.info(f"Alert cancelled for {state.city}")
     
     async def run(self):
