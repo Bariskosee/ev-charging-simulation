@@ -7,6 +7,7 @@ Provides:
 - Key generation, rotation, and revocation
 - Status enforcement (ACTIVE, OUT_OF_SERVICE, REVOKED)
 - Payload encryption/decryption for CP communication
+- Centralized audit logging for all security operations
 """
 
 import secrets
@@ -43,13 +44,15 @@ class CPAuthResult:
         cp_id: str,
         status: Optional[CPSecurityStatus] = None,
         reason: Optional[str] = None,
-        token: Optional[str] = None
+        token: Optional[str] = None,
+        reason_code: Optional[str] = None  # For audit logging
     ):
         self.success = success
         self.cp_id = cp_id
         self.status = status
         self.reason = reason
         self.token = token
+        self.reason_code = reason_code  # Structured reason for audit
     
     def is_authorized(self) -> bool:
         """Check if CP is authorized for operations."""

@@ -1139,3 +1139,254 @@ class CPSecurityDB:
             
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
+
+
+class AuditDB:
+    """
+    Database manager for centralized audit logging.
+    
+    Provides SQLite-backed audit trail for:
+    - Authentication events (success/failure)
+    - CP status changes
+    - Key operations (reset/revoke)
+    - Security incidents
+    - System errors
+    - Validation errors
+    """
+    
+    def __init__(self, db_path: str = "ev_charging.db"):
+        """
+        Initialize audit database connection.
+        
+        Args:
+            db_path: Path to SQLite database file
+        """
+        self.db_path = db_path
+        self.init_schema()
+    
+    def init_schema(self):
+        """Create audit_events table and indexes if they don't exist."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Audit events table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date_time TEXT NOT NULL,
+                    who TEXT NOT NULL,
+                    ip TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    reason_code TEXT,
+                    request_id TEXT,
+                    endpoint TEXT,
+                    http_method TEXT,
+                    status_code INTEGER,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create indexes for efficient querying
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_date_time 
+                ON audit_events(date_time)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_who 
+                ON audit_events(who)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_action 
+                ON audit_events(action)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_ip 
+                ON audit_events(ip)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_severity 
+                ON audit_events(severity)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_audit_request_id 
+                ON audit_events(request_id)
+            """)
+            
+            conn.commit()
+    
+    @contextmanager
+    def _get_connection(self):
+        """Context manager for database connections."""
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+    
+    def insert_event(self, event: Dict) -> bool:
+        """
+        Insert an audit event into the database.
+        
+        Args:
+            event: Dictionary containing audit event data with keys:
+                - date_time: UTC ISO-8601 timestamp
+                - who: cpId, "system", "admin", or "unknown"
+                - ip: Client IP address or "unknown"
+                - action: Event action type (AUTH_SUCCESS, AUTH_FAIL, etc.)
+                - description: Human-readable description (NO secrets)
+                - severity: INFO, WARN, ERROR, CRITICAL
+                - reason_code: Optional structured reason code
+                - request_id: Optional correlation ID
+                - endpoint: Optional API endpoint path
+                - http_method: Optional HTTP method
+                - status_code: Optional HTTP status code
+                - metadata_json: Optional sanitized JSON metadata
+        
+        Returns:
+            True if inserted successfully, False on error
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO audit_events 
+                    (date_time, who, ip, action, description, severity, 
+                     reason_code, request_id, endpoint, http_method, status_code, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    event.get('date_time'),
+                    event.get('who'),
+                    event.get('ip'),
+                    event.get('action'),
+                    event.get('description'),
+                    event.get('severity'),
+                    event.get('reason_code'),
+                    event.get('request_id'),
+                    event.get('endpoint'),
+                    event.get('http_method'),
+                    event.get('status_code'),
+                    event.get('metadata_json')
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            # Do NOT crash on audit failure - log and continue
+            logger.error(f"Failed to insert audit event: {e}")
+            return False
+    
+    def query_events(
+        self,
+        who: Optional[str] = None,
+        action: Optional[str] = None,
+        ip: Optional[str] = None,
+        severity: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict]:
+        """
+        Query audit events with optional filters.
+        
+        Args:
+            who: Filter by who (cpId, system, admin, etc.)
+            action: Filter by action type
+            ip: Filter by IP address
+            severity: Filter by severity level
+            start_time: Filter by start datetime (ISO-8601)
+            end_time: Filter by end datetime (ISO-8601)
+            limit: Maximum number of records to return
+            offset: Number of records to skip
+            
+        Returns:
+            List of audit event dictionaries
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = "SELECT * FROM audit_events WHERE 1=1"
+            params = []
+            
+            if who:
+                query += " AND who = ?"
+                params.append(who)
+            
+            if action:
+                query += " AND action = ?"
+                params.append(action)
+            
+            if ip:
+                query += " AND ip = ?"
+                params.append(ip)
+            
+            if severity:
+                query += " AND severity = ?"
+                params.append(severity)
+            
+            if start_time:
+                query += " AND date_time >= ?"
+                params.append(start_time)
+            
+            if end_time:
+                query += " AND date_time <= ?"
+                params.append(end_time)
+            
+            query += " ORDER BY date_time DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_recent_auth_failures(
+        self,
+        ip: Optional[str] = None,
+        cp_id: Optional[str] = None,
+        minutes: int = 10,
+        limit: int = 100
+    ) -> List[Dict]:
+        """
+        Get recent authentication failures for incident detection.
+        
+        Args:
+            ip: Filter by IP address
+            cp_id: Filter by CP ID
+            minutes: Time window in minutes
+            limit: Maximum number of records
+            
+        Returns:
+            List of AUTH_FAIL events
+        """
+        from datetime import timedelta
+        start_time = (utc_now() - timedelta(minutes=minutes)).isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT * FROM audit_events 
+                WHERE action = 'AUTH_FAIL' AND date_time >= ?
+            """
+            params = [start_time]
+            
+            if ip:
+                query += " AND ip = ?"
+                params.append(ip)
+            
+            if cp_id:
+                query += " AND who = ?"
+                params.append(cp_id)
+            
+            query += " ORDER BY date_time DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
