@@ -138,6 +138,31 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  
+  # ========== WEATHER SERVICE ==========
+
+    ev-weather:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.weather
+    container_name: ev-weather
+    environment:
+      WEATHER_OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      WEATHER_CENTRAL_HTTP_URL=${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      WEATHER_POLL_INTERVAL=${POLL_INTERVAL:-4}
+      WEATHER_CITY_FILE=${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
+      WEATHER_LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - evcharging-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ========== CHARGING POINT ENGINES (5 CPs) ==========
   

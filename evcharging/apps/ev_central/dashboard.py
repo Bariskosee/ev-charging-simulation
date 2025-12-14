@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from typing import TYPE_CHECKING
 from loguru import logger
 
-from evcharging.common.messages import CPRegistration
+from evcharging.common.messages import CPRegistration, WeatherReport
 
 if TYPE_CHECKING:
     from evcharging.apps.ev_central.main import EVCentralController
@@ -162,6 +162,56 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     "ts": cp.last_telemetry.ts.isoformat(),
                 })
         return {"telemetry": telemetry_list}
+
+    @app.get("/cp/{cp_id}/city")
+    async def get_city(cp_id: str):
+        """Get location information about specific charing point."""
+        if cp_id not in controller.charging_points:
+            return {"error": "Charging point not found"}, 404
+        
+        cp = controller.charging_points[cp_id]
+
+        return {
+            "cp_id": cp.cp_id,
+            "state": cp.city,
+        }
+
+    @app.post("/weather/report")
+    async def receive_weather_report(data: WeatherReport):
+        city = data.city
+        temperature = data.temperature
+        weather_status = []
+        
+        weather_status = weather_status.append({
+                    "city": city,
+                    "temperature": temperature,
+                })
+        
+        return {"success": True, "city": city}
+
+    @app.post("/weather/alert")
+    async def receive_alert(data: WeatherReport):
+        city = data.city
+        temperature = data.temperature
+        alert = data.alert
+        
+        if (alert):
+            pass
+            # TODO invoke method to shut down the cp in the given city
+        
+        return {"success": True, "city": city, "temperature": temperature, "alert": alert}
+
+    @app.post("/weather/cancel_alert")
+    async def receive_alert_cancel(data: WeatherReport):
+        city = data.city
+        temperature = data.temperature
+        alert = data.alert
+
+        if (not alert):
+            pass
+            # TODO invoke method to clear the fault in the cp in the given city
+        
+        return {"success": True, "city": city, "temperature": temperature, "alert": alert}
     
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):

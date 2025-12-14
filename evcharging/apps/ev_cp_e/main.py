@@ -51,6 +51,7 @@ class CPEngine:
         self.telemetry_task: asyncio.Task | None = None
         self.health_server: asyncio.Server | None = None
         self._running = False
+        self.weather_alert = False
         self.start_time = 0.0  # Track startup time for demo mode
     
     async def start(self):

@@ -24,6 +24,7 @@ from evcharging.common.messages import (
     DriverRequest, DriverUpdate, MessageStatus, CentralCommand, CommandType,
     CPStatus, CPTelemetry, CPSessionTicket, CPRegistration
 )
+from evcharging.common.charging_points import get_metadata
 from evcharging.common.states import CPState, can_supply
 from evcharging.common.utils import utc_now, generate_id
 from evcharging.common.circuit_breaker import CircuitBreaker, CircuitState
@@ -60,6 +61,7 @@ class ChargingPoint:
             recovery_timeout=30,
             half_open_max_calls=2
         )
+        self.city: str = get_metadata(cp_id).city
         self.monitor_status: ChargingPoint.MonitorStatus = ChargingPoint.MonitorStatus.DOWN
         self.monitor_last_seen: datetime | None = None
         self.engine_status_known: bool = False

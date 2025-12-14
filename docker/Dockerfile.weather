@@ -1,0 +1,33 @@
+# Base image with Python 3.11
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy wait-for-kafka script (from build context root)
+COPY wait-for-kafka.sh /usr/local/bin/wait-for-kafka.sh
+# Fix Windows line endings and make executable
+RUN sed -i 's/\r$//' /usr/local/bin/wait-for-kafka.sh && \
+    chmod +x /usr/local/bin/wait-for-kafka.sh
+
+# Copy application code
+COPY evcharging /app/evcharging
+
+# Set Python path
+ENV PYTHONPATH=/app
+ENV SERVICE_TYPE=weather
+
+# Run Central service with Kafka wait
+CMD ["/usr/local/bin/wait-for-kafka.sh"]
