@@ -111,6 +111,7 @@ class FaultHistoryDB:
                     last_authenticated TEXT,
                     certificate_fingerprint TEXT,
                     metadata TEXT,
+                    token_version INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -181,6 +182,15 @@ class FaultHistoryDB:
                 CREATE INDEX IF NOT EXISTS idx_cp_security_status 
                 ON cp_security_status(registration_status)
             """)
+            
+            # Migration: Add token_version column if it doesn't exist
+            cursor.execute("PRAGMA table_info(cp_registry)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'token_version' not in columns:
+                cursor.execute("""
+                    ALTER TABLE cp_registry 
+                    ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1
+                """)
             
             conn.commit()
     
@@ -529,7 +539,7 @@ class CPRegistryDB:
     
     def deregister_cp(self, cp_id: str) -> bool:
         """
-        Deregister a charging point.
+        Deregister a charging point and invalidate all existing tokens.
         
         Args:
             cp_id: Charging point identifier
@@ -542,9 +552,11 @@ class CPRegistryDB:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
+            # Increment token_version to invalidate all existing JWTs
             cursor.execute("""
                 UPDATE cp_registry
-                SET status = 'DEREGISTERED', deregistration_date = ?, updated_at = ?
+                SET status = 'DEREGISTERED', deregistration_date = ?, 
+                    token_version = token_version + 1, updated_at = ?
                 WHERE cp_id = ? AND status = 'REGISTERED'
             """, (deregistration_date, deregistration_date, cp_id))
             
@@ -565,7 +577,7 @@ class CPRegistryDB:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT cp_id, location, status, registration_date, deregistration_date,
-                       last_authenticated, certificate_fingerprint, metadata, 
+                       last_authenticated, certificate_fingerprint, metadata, token_version,
                        created_at, updated_at
                 FROM cp_registry
                 WHERE cp_id = ?
@@ -573,6 +585,50 @@ class CPRegistryDB:
             
             row = cursor.fetchone()
             return dict(row) if row else None
+    
+    def get_token_version(self, cp_id: str) -> Optional[int]:
+        """
+        Get current token version for a CP.
+        
+        Args:
+            cp_id: Charging point identifier
+            
+        Returns:
+            Token version or None if CP not found
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT token_version FROM cp_registry WHERE cp_id = ?
+            """, (cp_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return row['token_version']
+            return None
+    
+    def increment_token_version(self, cp_id: str) -> bool:
+        """
+        Increment token version to invalidate all existing tokens.
+        
+        Args:
+            cp_id: Charging point identifier
+            
+        Returns:
+            True if incremented successfully, False if CP not found
+        """
+        updated_at = utc_now().isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE cp_registry
+                SET token_version = token_version + 1, updated_at = ?
+                WHERE cp_id = ?
+            """, (updated_at, cp_id))
+            
+            conn.commit()
+            return cursor.rowcount > 0
     
     def get_cp_credentials(self, cp_id: str) -> Optional[str]:
         """

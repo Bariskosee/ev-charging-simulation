@@ -241,6 +241,22 @@ def create_app(config: RegistryConfig) -> FastAPI:
             existing_cp = db.get_cp(request.cp_id)
             is_reregistration = existing_cp is not None
             
+            if not is_reregistration:
+                # NEW REGISTRATION: Require admin authorization
+                logger.info(f"New registration attempt for CP: {request.cp_id}")
+                
+                if not x_registry_api_key or not validate_admin_key(x_registry_api_key, config.admin_api_key):
+                    logger.warning(
+                        f"Unauthorized registration attempt for {request.cp_id} - "
+                        "no valid admin key provided"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="New registration requires admin authorization (X-Registry-API-Key header)"
+                    )
+                
+                logger.info(f"New registration authorized via admin key for {request.cp_id}")
+            
             if is_reregistration:
                 # RE-REGISTRATION: Require proof of ownership
                 logger.info(f"Re-registration attempt for existing CP: {request.cp_id}")
@@ -311,10 +327,14 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 metadata=metadata_json
             )
             
-            # Create access token
+            # Get token version for JWT
+            token_version = db.get_token_version(request.cp_id) or 1
+            
+            # Create access token with version
             token = security_mgr.create_access_token(
                 cp_id=request.cp_id,
-                location=request.location
+                location=request.location,
+                token_version=token_version
             )
             
             # Calculate token expiration
@@ -455,7 +475,7 @@ def create_app(config: RegistryConfig) -> FastAPI:
                 logger.warning(f"Authentication failed: Invalid credentials for {request.cp_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid credentials"
+                    detail="Authentication failed"
                 )
             
             # Enforce certificate requirement if configured
@@ -496,10 +516,14 @@ def create_app(config: RegistryConfig) -> FastAPI:
             # Update last authenticated timestamp
             db.update_last_authenticated(request.cp_id)
             
-            # Create new access token
+            # Get current token version
+            token_version = cp_info.get('token_version', 1)
+            
+            # Create new access token with version
             token = security_mgr.create_access_token(
                 cp_id=request.cp_id,
-                location=cp_info['location']
+                location=cp_info['location'],
+                token_version=token_version
             )
             
             token_expires_at = (

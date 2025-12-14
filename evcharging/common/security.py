@@ -98,6 +98,7 @@ class SecurityManager:
         self,
         cp_id: str,
         location: Optional[str] = None,
+        token_version: Optional[int] = None,
         additional_claims: Optional[Dict] = None
     ) -> str:
         """
@@ -106,6 +107,7 @@ class SecurityManager:
         Args:
             cp_id: Charging point identifier
             location: CP location
+            token_version: Token version for revocation support
             additional_claims: Optional additional JWT claims
             
         Returns:
@@ -126,6 +128,9 @@ class SecurityManager:
         
         if location:
             claims["location"] = location
+        
+        if token_version is not None:
+            claims["token_version"] = token_version
         
         if additional_claims:
             claims.update(additional_claims)
@@ -168,6 +173,38 @@ class SecurityManager:
             return None
         except Exception:
             return None
+    
+    def verify_access_token_with_version(
+        self,
+        token: str,
+        current_token_version: int
+    ) -> Optional[Dict]:
+        """
+        Verify JWT access token and check token version for revocation.
+        
+        Args:
+            token: Encoded JWT token
+            current_token_version: Current token version from database
+            
+        Returns:
+            Decoded token claims or None if invalid/revoked
+        """
+        payload = self.verify_access_token(token)
+        
+        if not payload:
+            return None
+        
+        # Check token version - reject if token was issued before current version
+        token_version = payload.get("token_version")
+        if token_version is None:
+            # Old tokens without version are rejected for security
+            return None
+        
+        if token_version < current_token_version:
+            # Token has been revoked
+            return None
+        
+        return payload
     
     @staticmethod
     def extract_certificate_fingerprint(cert_pem: str, algorithm: str = "sha256") -> str:
