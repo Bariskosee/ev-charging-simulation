@@ -15,7 +15,7 @@ def load_cp_cities(filepath: str) -> dict:
             mapping[cp_id] = city
     return mapping
 
-cp_to_city = load_cp_cities("CP_cities.txt")
+cp_to_city = load_cp_cities("/app/evcharging/common/CP_cities.txt")
 
 @dataclass(frozen=True)
 class ChargingPointMetadata:

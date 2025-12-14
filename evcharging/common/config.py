@@ -121,7 +121,7 @@ class WeatherConfig(BaseSettings):
     openweather_api_key: str = Field(default="X-OpenWeather-API-Key", description="API key to access OpenWeather")
     central_http_url: str = Field(default="http://localhost:8000", description="EV Central HTTP base URL")
     poll_interval: int = Field(default=4, description="Interval in which the EV_W poll data from OpenWeather")
-    city_file: str = Field(default="evcharging/common/CP_cities.txt", description="File in which are kept the cities")
+    city_file: str = Field(default="/app/evcharging/common/CP_cities.txt", description="File in which are kept the cities")
     log_level: str = Field(default="INFO", description="Logging level")
 
     model_config = SettingsConfigDict(
