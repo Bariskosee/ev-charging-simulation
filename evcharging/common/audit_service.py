@@ -15,7 +15,7 @@ SECURITY RULES:
 import json
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from loguru import logger
 
 from evcharging.common.database import AuditDB
@@ -32,8 +32,7 @@ class RequestContext(BaseModel):
     endpoint: Optional[str] = Field(None, description="API endpoint path")
     http_method: Optional[str] = Field(None, description="HTTP method (GET, POST, etc.)")
     
-    class Config:
-        frozen = True  # Make immutable
+    model_config = ConfigDict(frozen=True)  # Make immutable (Pydantic v2)
 
 
 class AuditService:

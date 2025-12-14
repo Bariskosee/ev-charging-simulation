@@ -6,6 +6,7 @@ Tests the security components integrated into EVCentralController.
 
 import sys
 import asyncio
+import pytest
 from pathlib import Path
 from datetime import datetime
 
@@ -26,6 +27,7 @@ logger.add(
 )
 
 
+@pytest.mark.asyncio
 async def test_security_integration():
     """Test security features integrated into EVCentralController."""
     
