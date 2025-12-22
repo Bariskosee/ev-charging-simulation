@@ -7,7 +7,7 @@
 1. Visit [OpenWeather API](https://openweathermap.org/api)
 2. Click "Sign Up" and create a free account
 3. Navigate to "API keys" section in your dashboard
-4. Copy your API key (it looks like: `a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6`)
+4. Copy your API key (32-character hexadecimal string)
 
 ### Step 2: Configure the API Key
 
@@ -20,13 +20,13 @@ Edit the `.env` file in your project root:
 OPENWEATHER_API_KEY=your_api_key_here
 
 # Replace with your actual key:
-OPENWEATHER_API_KEY=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+OPENWEATHER_API_KEY=YOUR_ACTUAL_API_KEY_HERE
 ```
 
 **Option B: Using environment variable**
 
 ```bash
-export OPENWEATHER_API_KEY=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+export OPENWEATHER_API_KEY=YOUR_ACTUAL_API_KEY_HERE
 ```
 
 ### Step 3: Run the Module
