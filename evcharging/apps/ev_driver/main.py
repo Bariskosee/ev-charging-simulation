@@ -167,10 +167,14 @@ class EVDriver:
         """Process status update from Central."""
         request_id = update.request_id
         
-        if request_id not in self.pending_requests:
-            return  # Not our request or already completed
+        # Check if this is our request (either in pending_requests or session_state)
+        is_our_request = request_id in self.pending_requests
+        async with self._state_lock:
+            is_in_session_state = request_id in self.session_state
         
-        request = self.pending_requests[request_id]
+        if not is_our_request and not is_in_session_state:
+            logger.debug(f"Ignoring update for unknown request: {request_id}")
+            return  # Not our request
         
         status_emoji = {
             MessageStatus.ACCEPTED: "✅",
@@ -182,7 +186,7 @@ class EVDriver:
         
         logger.info(
             f"{status_emoji} Driver {self.driver_id} | {update.cp_id} | "
-            f"{update.status.upper()} | {update.reason or 'No details'}"
+            f"{update.status.value.upper()} | {update.reason or 'No details'}"
         )
         
         await self._apply_status_update(update)
@@ -190,7 +194,8 @@ class EVDriver:
         # Mark as completed if terminal state
         if update.status in {MessageStatus.COMPLETED, MessageStatus.DENIED, MessageStatus.FAILED}:
             self.completed_requests.append(request_id)
-            del self.pending_requests[request_id]
+            if request_id in self.pending_requests:
+                del self.pending_requests[request_id]
         
     async def handle_ticket(self, ticket: CPSessionTicket):
         """Persist the ticket locally and handle logic."""
@@ -211,8 +216,8 @@ class EVDriver:
         except Exception as e:
             logger.error(f"Failed to write ticket: {e}")
     
-    async def process_updates(self):
-        """Listen for status updates from Central."""
+    async def process_messages(self):
+        """Listen for all Kafka messages (updates and tickets) from Central."""
         async for msg in self.consumer.consume():
             try:
                 topic = msg["topic"]
@@ -223,28 +228,19 @@ class EVDriver:
                     
                     # Filter by driver ID
                     if update.driver_id == self.driver_id:
+                        logger.info(f"Received update for driver {self.driver_id}: {update.status.value}")
                         await self.handle_update(update)
-            
-            except Exception as e:
-                logger.error(f"Error processing update: {e}")
-            
-    async def process_tickets(self):
-        """Listen for new tickets from Central after ended session."""
-        async for msg in self.consumer.consume():
-            try:
-                topic = msg["topic"]
-                value = msg["value"]
                 
-                if topic == TOPICS["TICKET_TO_DRIVER"]:
+                elif topic == TOPICS["TICKET_TO_DRIVER"]:
                     ticket = CPSessionTicket(**value)
                                         
                     # Filter by driver ID
                     if ticket.driver_id == self.driver_id:
-                        logger.warning("=== DRIVER received ticket")
+                        logger.info(f"=== DRIVER {self.driver_id} received ticket for session {ticket.session_id}")
                         await self.handle_ticket(ticket)
             
             except Exception as e:
-                logger.error(f"Error processing ticket: {e}")
+                logger.error(f"Error processing message from {msg.get('topic', 'unknown')}: {e}")
     
     async def load_saved_tickets(self):
         """Load previously saved tickets from file on driver restart."""
@@ -624,16 +620,14 @@ async def main():
     # Initialize driver
     driver = EVDriver(config)
     
-    update_task: Optional[asyncio.Task] = None
-    ticket_task: Optional[asyncio.Task] = None
+    message_task: Optional[asyncio.Task] = None
     dashboard_task: Optional[asyncio.Task] = None
 
     try:
         await driver.start()
 
-        # Start update listener
-        update_task = asyncio.create_task(driver.process_updates(), name="driver-update-listener")
-        ticket_task = asyncio.create_task(driver.process_tickets(), name="driver-ticket-listener")
+        # Start unified message listener for updates and tickets
+        message_task = asyncio.create_task(driver.process_messages(), name="driver-message-listener")
 
         # Start dashboard HTTP server
         dashboard_app = create_driver_dashboard_app(driver)
@@ -666,7 +660,7 @@ async def main():
         logger.error(f"Fatal error: {e}")
         raise
     finally:
-        for task in (update_task, ticket_task, dashboard_task):
+        for task in (message_task, dashboard_task):
             if task and not task.done():
                 task.cancel()
                 try:

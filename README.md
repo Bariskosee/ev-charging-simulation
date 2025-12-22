@@ -52,7 +52,7 @@ docker compose up -d
 ```
 
 That's it! The entire system will:
-- ✅ Start **18 services** automatically (1 Kafka, 1 Central, 1 Registry, 5 CPs, 5 Monitors, 5 Drivers)
+- ✅ Start **19 services** automatically (1 Kafka, 1 Central, 1 Registry, 1 Front, 5 CPs, 5 Monitors, 5 Drivers)
 - ✅ Initialize and connect without intervention
 - ✅ Begin autonomous charging operations
 - ✅ Demonstrate all functionality through observable terminal outputs
@@ -64,6 +64,7 @@ That's it! The entire system will:
 - **[EV_REGISTRY_QUICKSTART.md](EV_REGISTRY_QUICKSTART.md)** - 🆕 Quick start for CP registration API
 - **[EV_REGISTRY_README.md](EV_REGISTRY_README.md)** - 🆕 Complete Registry documentation
 - **[EV_REGISTRY_IMPLEMENTATION.md](EV_REGISTRY_IMPLEMENTATION.md)** - 🆕 Implementation summary
+- **[EV_FRONT_README.md](EV_FRONT_README.md)** - 🆕 Global Status Dashboard - Multi-screen monitoring
 
 **Release 1**:
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - 📄 Quick reference card for lab deployments (print this!)
@@ -79,6 +80,7 @@ That's it! The entire system will:
 
 **Web Dashboards**:
 ```
+EV Global Dashboard:   http://localhost:8500  (NEW - Multi-screen capable!)
 EV Central Dashboard:  http://localhost:8000
 EV Registry API Docs:  http://localhost:8080/docs
 ```

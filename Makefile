@@ -15,6 +15,10 @@ help:
 	@echo "  make registry-test  - Run EV_Registry API tests"
 	@echo "  make registry-logs  - Show EV_Registry logs"
 	@echo ""
+	@echo "EV_Front (Global Dashboard):"
+	@echo "  make front          - Start only EV_Front dashboard"
+	@echo "  make front-logs     - Show EV_Front logs"
+	@echo ""
 	@echo "Management:"
 	@echo "  make down           - Stop all services"
 	@echo "  make restart        - Restart all services"
@@ -53,6 +57,17 @@ registry-test:
 registry-logs:
 	docker compose logs -f ev-registry
 
+# EV_Front commands  
+front:
+	@echo "Starting EV_Front Global Dashboard..."
+	docker compose up -d ev-front
+	@echo ""
+	@echo "EV_Front started! Access global dashboard at http://localhost:8500"
+	@echo "Open on multiple browsers/screens for synchronized multi-view monitoring"
+
+front-logs:
+	docker compose logs -f ev-front
+
 # Deployment commands
 deploy:
 	@echo "Running interactive deployment..."
@@ -66,8 +81,11 @@ up:
 	@echo "Starting all services (full deployment)..."
 	docker compose up -d
 	@echo ""
-	@echo "Services started! Access dashboard at http://localhost:8000"
-	@echo "EV_Registry API: http://localhost:8080/docs"
+	@echo "Services started!"
+	@echo "  Global Dashboard:  http://localhost:8500  (Multi-screen capable!)"
+	@echo "  Central Dashboard: http://localhost:8000"
+	@echo "  Registry API:      http://localhost:8080/docs"
+	@echo ""
 	@echo "Run 'make logs' to view logs or 'make verify' to check status"
 
 remote-kafka:

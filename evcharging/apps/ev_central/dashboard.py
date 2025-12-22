@@ -118,7 +118,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         data = controller.get_dashboard_data()
         return {
             "charging_points": data["charging_points"],
-            "active_requests": data["active_requests"]
+            "active_requests": data["active_requests"],
+            "active_requests_details": data.get("active_requests_details", [])
         }
     
     @app.get("/cp/{cp_id}")
@@ -201,9 +202,11 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     display: flex;
                     gap: 20px;
                     margin: 20px 0;
+                    flex-wrap: wrap;
                 }}
                 .stat-card {{
                     flex: 1;
+                    min-width: 200px;
                     background: #f8f9fa;
                     padding: 20px;
                     border-radius: 8px;
@@ -304,6 +307,41 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     font-style: italic;
                     margin-top: 10px;
                 }}
+                .active-sessions {{
+                    background: #e3f2fd;
+                    padding: 20px;
+                    border-radius: 12px;
+                    margin-bottom: 30px;
+                    border-left: 5px solid #2196f3;
+                }}
+                .active-sessions h2 {{
+                    color: #1976d2;
+                    margin-bottom: 15px;
+                }}
+                .request-item {{
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }}
+                .request-info {{
+                    display: flex;
+                    gap: 10px;
+                    align-items: center;
+                }}
+                .request-meta {{
+                    display: flex;
+                    gap: 15px;
+                    color: #666;
+                    font-size: 0.9em;
+                }}
+                .request-id {{
+                    font-family: monospace;
+                }}
                 .refresh-btn {{
                     background: #667eea;
                     color: white;
@@ -395,6 +433,9 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                             const driverHtml = cp.current_driver ? 
                                 `<div class="driver-info">👤 Driver: ${{cp.current_driver}}</div>` : '';
                             
+                            const sessionHtml = cp.current_session ?
+                                `<div class="driver-info">🔋 Session: ${{cp.current_session}}</div>` : '';
+                            
                             const stopButtonHtml = cp.engine_state === 'SUPPLYING' ?
                                 `<button class="stop-btn" onclick="stopCharging('${{cp.cp_id}}')">Stop Charging</button>`
                                 : '';
@@ -405,6 +446,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                     <span class="state-badge state-${{cp.state}}">${{cp.state}}</span>
                                 </div>
                                 ${{driverHtml}}
+                                ${{sessionHtml}}
                                 ${{statusHtml}}
                                 ${{stopButtonHtml}}
                             `;
@@ -412,11 +454,37 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                             cpGrid.appendChild(card);
                         }});
                         
+                        // Update active requests list
+                        updateActiveRequests(data.active_requests_details || []);
+                        
                         // Update timestamp
                         document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
                     }} catch (error) {{
                         console.error('Error updating dashboard:', error);
                     }}
+                }}
+                
+                function updateActiveRequests(requests) {{
+                    const container = document.getElementById('active-requests-list');
+                    if (!container) return;
+                    
+                    if (requests.length === 0) {{
+                        container.innerHTML = '<p style="color: #666; text-align: center;">No active requests</p>';
+                        return;
+                    }}
+                    
+                    container.innerHTML = requests.map(req => `
+                        <div class="request-item">
+                            <div class="request-info">
+                                <strong>👤 ${{req.driver_id}}</strong>
+                                <span>→ ${{req.cp_id}}</span>
+                            </div>
+                            <div class="request-meta">
+                                <span class="request-id">ID: ${{req.request_id}}</span>
+                                <span class="request-time">${{new Date(req.ts).toLocaleTimeString()}}</span>
+                            </div>
+                        </div>
+                    `).join('');
                 }}
 
                 async function stopCharging(cp_id) {{
@@ -462,6 +530,14 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     <div class="stat-card">
                         <div class="stat-value" id="currently-charging">{sum(1 for cp in data['charging_points'] if cp['engine_state'] == 'SUPPLYING')}</div>
                         <div class="stat-label">Currently Charging</div>
+                    </div>
+                </div>
+                
+                <!-- Active Sessions Section -->
+                <div class="active-sessions">
+                    <h2>🔋 Active Charging Sessions</h2>
+                    <div id="active-requests-list">
+                        <p style="color: #666; text-align: center;">No active requests</p>
                     </div>
                 </div>
                 

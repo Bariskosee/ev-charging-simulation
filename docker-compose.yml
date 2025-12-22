@@ -79,6 +79,7 @@ services:
       CENTRAL_HTTP_PORT: 8000
       CENTRAL_LISTEN_PORT: 9999
       CENTRAL_LOG_LEVEL: INFO
+      EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
     depends_on:
       kafka:
         condition: service_healthy

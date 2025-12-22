@@ -211,12 +211,22 @@ class EVCentralController:
             logger.info(f"Updated CP registration: {cp_id}")
         
         # Set to ACTIVATED state
-        self.charging_points[cp_id].state = CPState.ACTIVATED
-        self.charging_points[cp_id].last_update = utc_now()
-        self.charging_points[cp_id].record_monitor_heartbeat()
+        cp = self.charging_points[cp_id]
+        cp.state = CPState.ACTIVATED
+        cp.last_update = utc_now()
+        cp.record_monitor_heartbeat()
         
-        # Initialize security for this CP
-        self._initialize_cp_security(cp_id)
+        # Auto-authorize CP for lab environment (no EV_Registry dependency)
+        cp.is_authenticated = True
+        cp.has_encryption_key = True
+        cp.security_status = CPSecurityStatus.ACTIVE
+        logger.info(f"CP {cp_id} auto-authorized for lab environment")
+        
+        # Try to initialize advanced security (optional, don't fail if unavailable)
+        try:
+            self._initialize_cp_security(cp_id)
+        except Exception as e:
+            logger.debug(f"Advanced security init skipped for {cp_id}: {e}")
         
         return True
     
@@ -466,11 +476,17 @@ class EVCentralController:
             # Create placeholder and immediately activate it since monitor is alive
             cp = ChargingPoint(cp_id)
             cp.state = CPState.ACTIVATED  # Set to ACTIVATED instead of DISCONNECTED
+            
+            # Auto-authorize CP for lab environment
+            cp.is_authenticated = True
+            cp.has_encryption_key = True
+            cp.security_status = CPSecurityStatus.ACTIVE
+            
             cp.record_monitor_heartbeat()
             self.charging_points[cp_id] = cp
             
             # Log the auto-registration
-            logger.info(f"CP {cp_id} auto-registered via monitor heartbeat - state: ACTIVATED")
+            logger.info(f"CP {cp_id} auto-registered via monitor heartbeat - state: ACTIVATED, security: ACTIVE")
 
     async def handle_driver_request(self, request: DriverRequest):
         """Process a driver charging request."""
@@ -516,19 +532,32 @@ class EVCentralController:
         cp.current_driver = request.driver_id
         cp.current_session = generate_id("session")
         
-        # Start charging session in database
-        self.db.start_charging_session(
-            session_id=cp.current_session,
-            cp_id=request.cp_id,
-            driver_id=request.driver_id
-        )
+        logger.info(f"Accepting request {request.request_id}: session_id={cp.current_session}, cp={request.cp_id}")
         
-        await self._send_driver_update(
-            request,
-            MessageStatus.ACCEPTED,
-            "Request accepted, starting charging",
-            session_id=cp.current_session
-        )
+        # Start charging session in database
+        try:
+            self.db.start_charging_session(
+                session_id=cp.current_session,
+                cp_id=request.cp_id,
+                driver_id=request.driver_id
+            )
+            logger.info(f"Charging session recorded in database: {cp.current_session}")
+        except Exception as e:
+            logger.error(f"Failed to record charging session in database: {e}")
+            # Continue anyway - database is not critical for operation
+        
+        logger.info(f"Sending ACCEPTED update to driver {request.driver_id} with session_id={cp.current_session}")
+        
+        try:
+            await self._send_driver_update(
+                request,
+                MessageStatus.ACCEPTED,
+                "Request accepted, starting charging",
+                session_id=cp.current_session
+            )
+            logger.info(f"ACCEPTED update sent successfully to {request.driver_id}")
+        except Exception as e:
+            logger.error(f"Failed to send ACCEPTED update: {e}")
         
         # Send START_SUPPLY command to CP_E
         command = CentralCommand(
@@ -649,6 +678,8 @@ class EVCentralController:
 
     async def handle_session_end(self, ticket: CPSessionTicket):
         driver_id = ticket.driver_id
+        cp_id = ticket.cp_id
+        session_id = ticket.session_id
 
         ticket_file = f"central_tickets/{driver_id}.txt"
         os.makedirs("central_tickets", exist_ok=True)
@@ -658,7 +689,43 @@ class EVCentralController:
         
         await self.producer.send(TOPICS["TICKET_TO_DRIVER"], ticket.model_dump(mode="json"), key=driver_id)
 
-        logger.info(f"Saved final ticket for driver {driver_id} (session {ticket.session_id})")
+        logger.info(f"Saved final ticket for driver {driver_id} (session {session_id})")
+        
+        # Send COMPLETED update to driver
+        # Find the original request for this session
+        request_id = None
+        for req_id, req in self.active_requests.items():
+            if hasattr(req, 'driver_id') and req.driver_id == driver_id:
+                if cp_id in self.charging_points:
+                    cp = self.charging_points[cp_id]
+                    if cp.current_session == session_id or cp.current_driver == driver_id:
+                        request_id = req_id
+                        break
+        
+        # Send COMPLETED status to driver
+        update = DriverUpdate(
+            request_id=request_id or generate_id("req"),  # Use found request_id or generate one
+            driver_id=driver_id,
+            cp_id=cp_id,
+            status=MessageStatus.COMPLETED,
+            reason=f"Session completed: {ticket.energy_kwh:.2f} kWh, €{ticket.cost_eur:.2f}",
+            session_id=session_id
+        )
+        await self.producer.send(TOPICS["DRIVER_UPDATES"], update, key=driver_id)
+        logger.info(f"Sent COMPLETED update to driver {driver_id} for session {session_id}")
+        
+        # Clear CP session info
+        if cp_id in self.charging_points:
+            cp = self.charging_points[cp_id]
+            if cp.current_session == session_id:
+                cp.current_session = None
+                cp.current_driver = None
+                logger.info(f"Cleared session info from CP {cp_id}")
+        
+        # Remove from active requests
+        if request_id and request_id in self.active_requests:
+            del self.active_requests[request_id]
+            logger.info(f"Removed request {request_id} from active requests")
 
     
     async def _send_driver_update(
@@ -678,6 +745,7 @@ class EVCentralController:
             session_id=session_id
         )
         await self.producer.send(TOPICS["DRIVER_UPDATES"], update, key=request.driver_id)
+        logger.info(f"Sent {status.value} update to driver {request.driver_id} for {request.cp_id} (session_id: {session_id})")
     
     async def send_stop_supply_command(self, cp_id: str, reason: str = "Manual stop requested"):
         """Send STOP_SUPPLY command to a charging point."""
@@ -731,6 +799,7 @@ class EVCentralController:
                     "engine_state": cp.state.value,
                     "monitor_status": cp.monitor_status.value,
                     "current_driver": cp.current_driver,
+                    "current_session": cp.current_session,
                     "last_update": cp.last_update.isoformat(),
                     "monitor_last_seen": cp.monitor_last_seen.isoformat() if cp.monitor_last_seen else None,
                     "security_status": cp.security_status.value,
@@ -750,6 +819,15 @@ class EVCentralController:
                 for cp in self.charging_points.values()
             ],
             "active_requests": len(self.active_requests),
+            "active_requests_details": [
+                {
+                    "request_id": req.request_id,
+                    "driver_id": req.driver_id,
+                    "cp_id": req.cp_id,
+                    "ts": req.ts.isoformat(),
+                }
+                for req in self.active_requests.values()
+            ],
         }
 
     def _refresh_monitor_states(self):

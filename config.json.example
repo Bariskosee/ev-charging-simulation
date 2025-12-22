@@ -1,0 +1,14 @@
+{
+  "weather": {
+    "api_key": "your_openweather_api_key_here",
+    "polling_interval": 4,
+    "temperature_unit": "metric"
+  },
+  "locations": {
+    "default_cities": [
+      "Istanbul",
+      "Ankara",
+      "Izmir"
+    ]
+  }
+}
