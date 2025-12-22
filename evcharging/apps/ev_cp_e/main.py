@@ -24,6 +24,12 @@ from evcharging.common.messages import (
 )
 from evcharging.common.states import CPState, CPEvent, transition, StateTransitionError
 from evcharging.common.utils import utc_now
+from evcharging.common.cp_security import CPEncryptionService
+from evcharging.common.error_manager import (
+    ErrorManager, ErrorCategory, ErrorSeverity, ErrorSource,
+    get_error_manager, report_connection_error, report_communication_error,
+    report_registry_error, resolve_target_errors
+)
 
 
 class ChargingSession:
@@ -52,29 +58,132 @@ class CPEngine:
         self.health_server: asyncio.Server | None = None
         self._running = False
         self.start_time = 0.0  # Track startup time for demo mode
+        
+        # Encryption support
+        self._encryption_key: bytes | None = None
+        self._encryption_enabled = os.environ.get("EV_KAFKA_ENCRYPTION", "false").lower() == "true"
+        self._encryption_error: str | None = None
+        self._encryption_error_type: str | None = None
+        
+        # Initialize error manager for tracking and display
+        self.error_manager = get_error_manager()
+        
+        # Central connectivity tracking
+        self._central_connected: bool = True
+        self._central_error: str | None = None
+        self._message_errors: list[dict] = []  # Track recent message errors for display
+        
+        # Load encryption key from environment or file
+        self._load_encryption_key()
+    
+    async def _send_encrypted_message(self, topic: str, message_obj, key: str):
+        """
+        Send an encrypted message to Kafka.
+        
+        If encryption is enabled, wraps the message in an encrypted envelope.
+        If encryption fails, logs error and message is NOT sent to prevent
+        unencrypted data leakage.
+        
+        Args:
+            topic: Kafka topic to send to
+            message_obj: Pydantic model or dict to send
+            key: Kafka message key
+        """
+        import base64
+        from pydantic import BaseModel
+        
+        # Convert to dict if needed
+        if isinstance(message_obj, BaseModel):
+            message_dict = json.loads(message_obj.model_dump_json())
+        elif isinstance(message_obj, dict):
+            message_dict = message_obj
+        else:
+            logger.error(f"CP {self.cp_id}: Invalid message type for encryption")
+            return
+        
+        if not self._encryption_enabled:
+            # Send unencrypted (lab mode)
+            await self.producer.send(topic, message_obj, key=key)
+            return
+        
+        if not self._encryption_key:
+            self._set_encryption_error(
+                "key_not_found",
+                f"Cannot send encrypted message: No encryption key loaded for CP {self.cp_id}"
+            )
+            # DO NOT send unencrypted - this would be a security breach
+            logger.error(
+                f"CP {self.cp_id}: Message NOT sent to {topic} - no encryption key. "
+                "Fix encryption key and restart."
+            )
+            return
+        
+        try:
+            # Encrypt the payload
+            payload_json = json.dumps(message_dict)
+            encrypted_payload = CPEncryptionService.encrypt_payload(payload_json, self._encryption_key)
+            
+            # Create encrypted message wrapper
+            encrypted_message = {
+                "cp_id": self.cp_id,
+                "encrypted": True,
+                "payload": encrypted_payload,
+                "ts": utc_now().isoformat()
+            }
+            
+            await self.producer.send(topic, encrypted_message, key=key)
+            
+            # Clear any previous error (recovery)
+            if self._encryption_error:
+                logger.info(f"CP {self.cp_id}: Encryption recovered - sending messages successfully")
+                self._clear_encryption_error()
+        
+        except Exception as e:
+            self._set_encryption_error(
+                "encryption_failed",
+                f"Failed to encrypt message for {topic}: {str(e)}"
+            )
+            # DO NOT send unencrypted
+            logger.error(
+                f"CP {self.cp_id}: Message NOT sent to {topic} - encryption failed: {e}"
+            )
     
     async def start(self):
         """Initialize and start the CP Engine."""
         logger.info(f"Starting CP Engine: {self.cp_id}")
         
-        # Ensure Kafka topics exist
-        await ensure_topics(
-            self.config.kafka_bootstrap,
-            list(TOPICS.values())
-        )
-        
-        # Initialize Kafka producer
-        self.producer = KafkaProducerHelper(self.config.kafka_bootstrap)
-        await self.producer.start()
-        
-        # Initialize Kafka consumer for commands
-        self.consumer = KafkaConsumerHelper(
-            self.config.kafka_bootstrap,
-            topics=[TOPICS["CENTRAL_COMMANDS"]],
-            group_id=f"cp-engine-{self.cp_id}",
-            auto_offset_reset="latest"
-        )
-        await self.consumer.start()
+        try:
+            # Ensure Kafka topics exist
+            await ensure_topics(
+                self.config.kafka_bootstrap,
+                list(TOPICS.values())
+            )
+            
+            # Initialize Kafka producer
+            self.producer = KafkaProducerHelper(self.config.kafka_bootstrap)
+            await self.producer.start()
+            
+            # Initialize Kafka consumer for commands
+            self.consumer = KafkaConsumerHelper(
+                self.config.kafka_bootstrap,
+                topics=[TOPICS["CENTRAL_COMMANDS"]],
+                group_id=f"cp-engine-{self.cp_id}",
+                auto_offset_reset="latest"
+            )
+            await self.consumer.start()
+            
+            # Clear any previous Central connection errors
+            resolve_target_errors("Central", "Kafka connection established successfully")
+            
+        except Exception as e:
+            logger.error(f"CP {self.cp_id}: Failed to connect to Kafka/Central: {e}")
+            report_connection_error(
+                source=ErrorSource.CP_ENGINE,
+                target="Central",
+                service_name="Central",
+                detail=f"Impossible to connect to Central: {e}"
+            )
+            raise
         
         # Start health check TCP server
         await self.start_health_server()
@@ -131,13 +240,13 @@ class CPEngine:
             
             logger.info(f"CP {self.cp_id}: {old_state} + {event} -> {self.state} ({reason})")
             
-            # Send status update to Central
+            # Send status update to Central (encrypted if enabled)
             status = CPStatus(
                 cp_id=self.cp_id,
                 state=self.state.value,
                 reason=reason or f"Event: {event}"
             )
-            await self.producer.send(TOPICS["CP_STATUS"], status, key=self.cp_id)
+            await self._send_encrypted_message(TOPICS["CP_STATUS"], status, key=self.cp_id)
         
         except StateTransitionError as e:
             logger.error(f"Invalid state transition: {e}")
@@ -244,7 +353,7 @@ class CPEngine:
                 f.write(ticket.model_dump_json() + "\n")
             
             try:
-                await self.producer.send(TOPICS["CP_SESSION_END"], ticket.model_dump(mode="json"), key=self.cp_id)
+                await self._send_encrypted_message(TOPICS["CP_SESSION_END"], ticket.model_dump(mode="json"), key=self.cp_id)
                 logger.warning("=== Sent CP_SESSION_END event")
             except Exception as e:
                 logger.warning(f"CP {self.cp_id}: Failed to notify Central — will retry later ({e})")
@@ -265,7 +374,7 @@ class CPEngine:
                 for line in f:
                     ticket = json.loads(line.strip())
                     try:
-                        await self.producer.send(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
+                        await self._send_encrypted_message(TOPICS["CP_SESSION_END"], ticket, key=self.cp_id)
                         logger.info(f"Resent stored ticket for {ticket['driver_id']}")
                     except Exception as e:
                         logger.warning(f"Failed to resend ticket {ticket['session_id']}: {e}")
@@ -286,7 +395,7 @@ class CPEngine:
                     self.current_session.cumulative_kwh * self.config.euro_rate
                 )
                 
-                # Emit telemetry
+                # Emit telemetry (encrypted if enabled)
                 telemetry = CPTelemetry(
                     cp_id=self.cp_id,
                     kw=self.config.kw_rate,
@@ -295,7 +404,7 @@ class CPEngine:
                     driver_id=self.current_session.driver_id,
                     session_id=self.current_session.session_id
                 )
-                await self.producer.send(TOPICS["CP_TELEMETRY"], telemetry, key=self.cp_id)
+                await self._send_encrypted_message(TOPICS["CP_TELEMETRY"], telemetry, key=self.cp_id)
                 
                 logger.debug(
                     f"CP {self.cp_id} telemetry: {telemetry.kw:.2f} kW, "
@@ -326,8 +435,17 @@ class CPEngine:
                     if not data:
                         break
                     
-                    # Respond with OK if engine is running
-                    response = f"OK:{self.state.value}\n"
+                    # Respond with status including encryption error if any
+                    if self._encryption_error:
+                        response = f"ENCRYPTION_ERROR:{self.state.value}:{self._encryption_error_type}\n"
+                    else:
+                        # Include error count in response
+                        active_errors = self.error_manager.get_active_errors(source=ErrorSource.CP_ENGINE)
+                        error_count = len(active_errors)
+                        if error_count > 0:
+                            response = f"OK:{self.state.value}:ERRORS={error_count}\n"
+                        else:
+                            response = f"OK:{self.state.value}\n"
                     writer.write(response.encode('utf-8'))
                     await writer.drain()
             except:
@@ -376,8 +494,25 @@ class CPEngine:
                     value = msg["value"]
                     
                     if topic == TOPICS["CENTRAL_COMMANDS"]:
-                        command = CentralCommand(**value)
+                        # Try to decrypt if message is encrypted
+                        command_data = await self._try_decrypt_message(value)
+                        
+                        if command_data is None:
+                            # Decryption failed - error already logged
+                            # Report error for CP display
+                            report_communication_error(
+                                source=ErrorSource.CP_ENGINE,
+                                target="Central",
+                                component="Central",
+                                detail="Failed to decrypt or parse command message from Central"
+                            )
+                            continue
+                        
+                        command = CentralCommand(**command_data)
                         await self.handle_command(command)
+                        
+                        # Clear any previous Central connection errors on success
+                        resolve_target_errors("Central", "Successfully received command from Central")
                         
                         # Break loop if shutdown was commanded
                         if not self._running:
@@ -385,9 +520,164 @@ class CPEngine:
                 
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
+                    # Report message processing error
+                    self.error_manager.report_error(
+                        category=ErrorCategory.COMMUNICATION,
+                        source=ErrorSource.CP_ENGINE,
+                        target="Central",
+                        message="Incomprehensible messages from the central office.",
+                        severity=ErrorSeverity.ERROR,
+                        technical_detail=str(e)
+                    )
         except Exception as e:
             if self._running:  # Only log if not intentionally stopped
                 logger.error(f"Error in message processing loop: {e}")
+                # Report Kafka connection error
+                report_connection_error(
+                    source=ErrorSource.CP_ENGINE,
+                    target="Central",
+                    service_name="Central",
+                    detail=f"Message processing loop error: {e}"
+                )
+    
+    def _load_encryption_key(self):
+        """
+        Load encryption key from environment or key file.
+        
+        Key sources (in order of priority):
+        1. EV_CP_ENCRYPTION_KEY environment variable (base64 encoded)
+        2. Key file at path specified by EV_CP_KEY_FILE
+        3. Default key file at ./keys/{cp_id}.key
+        """
+        import base64
+        
+        # Try environment variable first
+        key_b64 = os.environ.get("EV_CP_ENCRYPTION_KEY")
+        if key_b64:
+            try:
+                self._encryption_key = base64.b64decode(key_b64)
+                logger.info(f"CP {self.cp_id}: Loaded encryption key from environment")
+                return
+            except Exception as e:
+                logger.error(f"CP {self.cp_id}: Invalid key in EV_CP_ENCRYPTION_KEY: {e}")
+        
+        # Try key file
+        key_file = os.environ.get("EV_CP_KEY_FILE", f"keys/{self.cp_id}.key")
+        if os.path.exists(key_file):
+            try:
+                with open(key_file, "rb") as f:
+                    self._encryption_key = f.read()
+                logger.info(f"CP {self.cp_id}: Loaded encryption key from {key_file}")
+                return
+            except Exception as e:
+                logger.error(f"CP {self.cp_id}: Failed to read key file {key_file}: {e}")
+        
+        # No key available
+        if self._encryption_enabled:
+            logger.warning(
+                f"CP {self.cp_id}: Encryption enabled but no key available. "
+                f"Set EV_CP_ENCRYPTION_KEY or create key file at {key_file}"
+            )
+        else:
+            logger.debug(f"CP {self.cp_id}: Encryption disabled, no key needed")
+    
+    async def _try_decrypt_message(self, message: dict) -> dict | None:
+        """
+        Try to decrypt an encrypted message.
+        
+        Args:
+            message: Raw message from Kafka
+            
+        Returns:
+            Decrypted payload dict, or original message if not encrypted,
+            or None if decryption failed
+        """
+        # Check if message is in encrypted format
+        if not isinstance(message, dict):
+            return message
+        
+        # Check for encrypted message wrapper
+        if "encrypted" not in message or "cp_id" not in message:
+            # Not an encrypted message wrapper - return as-is
+            return message
+        
+        cp_id = message.get("cp_id")
+        encrypted = message.get("encrypted", False)
+        payload = message.get("payload")
+        
+        # Check if message is for this CP
+        if cp_id != self.cp_id:
+            # Not for this CP - return None to skip
+            return None
+        
+        if not encrypted:
+            # Unencrypted wrapper - return payload directly
+            if isinstance(payload, dict):
+                return payload
+            if isinstance(payload, str):
+                return json.loads(payload)
+            return payload
+        
+        # Message is encrypted - try to decrypt
+        if not self._encryption_key:
+            self._set_encryption_error(
+                "key_not_found",
+                f"Cannot decrypt: No encryption key loaded for CP {self.cp_id}"
+            )
+            return None
+        
+        try:
+            decrypted_json = CPEncryptionService.decrypt_payload(payload, self._encryption_key)
+            decrypted = json.loads(decrypted_json)
+            
+            # Clear any previous error (recovery)
+            if self._encryption_error:
+                logger.info(
+                    f"CP {self.cp_id}: Encryption recovered - key is now correct"
+                )
+                self._clear_encryption_error()
+            
+            return decrypted
+        
+        except ValueError as e:
+            # Decryption failed - likely key mismatch
+            self._set_encryption_error(
+                "key_mismatch",
+                f"Decryption failed for CP {self.cp_id}: Key mismatch. "
+                f"Central and CP encryption keys do not match. "
+                f"Error: {str(e)}"
+            )
+            return None
+        
+        except Exception as e:
+            self._set_encryption_error(
+                "decryption_failed",
+                f"Unexpected decryption error: {str(e)}"
+            )
+            return None
+    
+    def _set_encryption_error(self, error_type: str, message: str):
+        """Record an encryption error for display."""
+        self._encryption_error = message
+        self._encryption_error_type = error_type
+        logger.error(f"CP {self.cp_id} ENCRYPTION ERROR: {message}")
+        
+        # Also include in status updates so Central and front-end can see it
+        # The next status update will include this error
+    
+    def _clear_encryption_error(self):
+        """Clear encryption error (recovery)."""
+        self._encryption_error = None
+        self._encryption_error_type = None
+    
+    def get_encryption_status(self) -> dict:
+        """Get encryption status for health check/display."""
+        return {
+            "enabled": self._encryption_enabled,
+            "key_loaded": self._encryption_key is not None,
+            "error": self._encryption_error,
+            "error_type": self._encryption_error_type
+        }
 
 
 async def main():

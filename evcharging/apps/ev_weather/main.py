@@ -6,12 +6,14 @@ Main entry point for the weather monitoring module.
 import asyncio
 import signal
 import sys
+import uvicorn
 from loguru import logger
 
 from .config import WeatherConfig
 from .location_manager import LocationManager
 from .weather_service import WeatherService
 from .menu import WeatherMenu
+from .dashboard import create_weather_dashboard
 
 
 class EVWeatherController:
@@ -24,6 +26,8 @@ class EVWeatherController:
         self.weather_service = None
         self.menu = None
         self._shutdown_event = asyncio.Event()
+        self.dashboard_app = None
+        self.dashboard_server = None
     
     async def initialize(self) -> bool:
         """
@@ -47,6 +51,9 @@ class EVWeatherController:
         self.weather_service = WeatherService(self.config, self.location_manager)
         self.menu = WeatherMenu(self.location_manager, self._request_shutdown)
         
+        # Initialize dashboard
+        self.dashboard_app = create_weather_dashboard(self)
+        
         logger.info("✅ EV_W initialized successfully")
         return True
     
@@ -69,6 +76,18 @@ class EVWeatherController:
         # Start menu in separate thread
         self.menu.start()
         
+        # Start dashboard server
+        dashboard_port = 8003  # Use port 8003 for weather dashboard
+        logger.info(f"🌐 Starting weather dashboard on http://localhost:{dashboard_port}")
+        config = uvicorn.Config(
+            self.dashboard_app,
+            host="0.0.0.0",
+            port=dashboard_port,
+            log_level="warning"
+        )
+        self.dashboard_server = uvicorn.Server(config)
+        dashboard_task = asyncio.create_task(self.dashboard_server.serve())
+        
         # Start weather service
         weather_task = asyncio.create_task(self.weather_service.start())
         
@@ -81,8 +100,13 @@ class EVWeatherController:
         # Cleanup
         await self.shutdown()
         
-        # Wait for weather task to complete
+        # Cancel tasks
+        dashboard_task.cancel()
         weather_task.cancel()
+        try:
+            await dashboard_task
+        except asyncio.CancelledError:
+            pass
         try:
             await weather_task
         except asyncio.CancelledError:
@@ -93,6 +117,9 @@ class EVWeatherController:
         logger.info("Shutting down EV_W services...")
         
         self.menu.stop()
+        
+        if self.dashboard_server:
+            self.dashboard_server.should_exit = True
         
         if self.weather_service:
             await self.weather_service.stop()

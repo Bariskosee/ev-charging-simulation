@@ -10,6 +10,7 @@ Weather monitoring module for the EV Charging distributed system (Release 2).
 - ✅ **Modular Design**: Easy to extend and configure
 - ✅ **Real-time Updates**: Weather polling adapts immediately to location changes
 - ✅ **Persistent Storage**: Locations saved/loaded from file
+- ✅ **Web Dashboard**: Real-time weather visualization at http://localhost:8003
 
 ## Configuration
 
@@ -67,9 +68,23 @@ Create a `config.json` file:
 python -m evcharging.apps.ev_weather.main
 ```
 
+### Accessing the Dashboard
+
+Once the service is running, open your browser and navigate to:
+
+**🌐 http://localhost:8003**
+
+The dashboard shows:
+- All monitored locations
+- Current temperature for each city
+- Weather description (sunny, cloudy, etc.)
+- Additional details: feels like, humidity, wind speed
+- Last update timestamp
+- Auto-refreshes every 30 seconds
+
 ### Interactive Menu
 
-Once running, you'll see an interactive menu:
+You can also use the console menu to manage locations:
 
 ```
 ============================================================

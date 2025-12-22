@@ -1,7 +1,6 @@
 # EV_W Monitored Locations
 # One city per line
-# Lines starting with # are comments
 
-Istanbul
 Ankara
+Istanbul
 Izmir

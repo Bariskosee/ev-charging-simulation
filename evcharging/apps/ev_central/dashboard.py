@@ -8,8 +8,9 @@ Security:
 - Unauthenticated access allowed for backward compatibility (lab mode)
 """
 
+import aiohttp
 from fastapi import FastAPI, Request, HTTPException, Header, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from typing import TYPE_CHECKING, Optional
 from loguru import logger
@@ -219,8 +220,55 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         return {
             "charging_points": data["charging_points"],
             "active_requests": data["active_requests"],
-            "active_requests_details": data.get("active_requests_details", [])
+            "active_requests_details": data.get("active_requests_details", []),
+            "system_errors": data.get("system_errors", []),
+            "error_summary": data.get("error_summary", {}),
         }
+    
+    @app.get("/errors")
+    async def list_errors():
+        """Get all system errors for dashboard display."""
+        data = controller.get_dashboard_data()
+        return {
+            "errors": data.get("system_errors", []),
+            "summary": data.get("error_summary", {}),
+            "system_events": data.get("system_events", []),
+        }
+    
+    @app.get("/weather")
+    async def get_weather():
+        """Get weather data for all CP locations from weather service."""
+        try:
+            # Get all unique cities from charging points
+            cities = set()
+            for cp in controller.charging_points.values():
+                if hasattr(cp, 'city') and cp.city:
+                    cities.add(cp.city)
+            
+            # Fetch weather data from weather service
+            weather_data = {}
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get('http://localhost:8003/weather', timeout=aiohttp.ClientTimeout(total=2)) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            # Filter only cities we care about
+                            for city in cities:
+                                if city in data.get('weather', {}):
+                                    weather_data[city] = data['weather'][city]
+                except Exception as e:
+                    logger.debug(f"Could not fetch weather data: {e}")
+            
+            return {
+                "cities": list(cities),
+                "weather": weather_data
+            }
+        except Exception as e:
+            logger.error(f"Error getting weather data: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e)}
+            )
     
     @app.get("/cp/{cp_id}")
     async def get_charging_point(cp_id: str):
@@ -445,6 +493,97 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     0%, 100% {{ opacity: 1; }}
                     50% {{ opacity: 0.7; }}
                 }}
+                /* Error section styles */
+                .errors-section {{
+                    background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+                    padding: 20px;
+                    border-radius: 12px;
+                    margin-bottom: 20px;
+                    border-left: 5px solid #f44336;
+                }}
+                .errors-section.no-errors {{
+                    background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+                    border-left-color: #4caf50;
+                }}
+                .errors-section h2 {{
+                    color: #c62828;
+                    margin-bottom: 15px;
+                }}
+                .errors-section.no-errors h2 {{
+                    color: #2e7d32;
+                }}
+                .error-item {{
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    border-left: 4px solid #f44336;
+                }}
+                .error-item.warning {{
+                    border-left-color: #ff9800;
+                }}
+                .error-item.info {{
+                    border-left-color: #2196f3;
+                }}
+                .error-content {{
+                    flex: 1;
+                }}
+                .error-message {{
+                    font-weight: bold;
+                    color: #333;
+                    margin-bottom: 5px;
+                }}
+                .error-detail {{
+                    font-size: 0.9em;
+                    color: #666;
+                }}
+                .error-meta {{
+                    display: flex;
+                    gap: 15px;
+                    margin-top: 8px;
+                    font-size: 0.85em;
+                    color: #888;
+                }}
+                .error-badge {{
+                    padding: 3px 8px;
+                    border-radius: 4px;
+                    font-size: 0.75em;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }}
+                .error-badge.critical {{ background: #b71c1c; color: white; }}
+                .error-badge.error {{ background: #f44336; color: white; }}
+                .error-badge.warning {{ background: #ff9800; color: white; }}
+                .error-badge.info {{ background: #2196f3; color: white; }}
+                .error-summary {{
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    margin-bottom: 15px;
+                }}
+                .error-stat {{
+                    background: white;
+                    padding: 10px 15px;
+                    border-radius: 6px;
+                    font-size: 0.9em;
+                }}
+                .error-stat span {{
+                    font-weight: bold;
+                    color: #f44336;
+                }}
+                .state-STOPPED {{ background: #ff9800; color: white; }}
+                .state-FAULT {{ background: #f44336; color: white; }}
+                .state-DISCONNECTED {{ background: #9e9e9e; color: white; }}
+                .state-ON {{ background: #4caf50; color: white; }}
+                .state-BROKEN {{ background: #f44336; color: white; }}
+                @keyframes pulse {{
+                    0%, 100% {{ opacity: 1; }}
+                    50% {{ opacity: 0.7; }}
+                }}
                 .telemetry {{
                     background: #f0f4ff;
                     padding: 12px;
@@ -541,6 +680,19 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     return date.toLocaleTimeString();
                 }}
 
+                // Fetch weather data
+                let weatherCache = {{}};
+                async function updateWeather() {{
+                    try {{
+                        const response = await fetch('/weather');
+                        const data = await response.json();
+                        weatherCache = data.weather || {{}};
+                    }} catch (error) {{
+                        console.debug('Weather service not available:', error);
+                        weatherCache = {{}};
+                    }}
+                }}
+
                 async function updateDashboard() {{
                     try {{
                         const response = await fetch('/cp');
@@ -589,11 +741,24 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                 `;
                             }}
 
-                            let weatherHtml = `
-                                <div class="weather">
-                                    City: ${{cp.city || 'Unknown'}}<br>
-                                    Weather: Unknown
-                                </div>
+                            // Add weather data from cache
+                            let weatherHtml = '';
+                            if (cp.city && weatherCache[cp.city]) {{
+                                const w = weatherCache[cp.city];
+                                const tempAlert = w.temperature > 35 || w.temperature < 0;
+                                const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
+                                weatherHtml = `
+                                    <div class="weather ${{cssClass}}">
+                                        🌡️ ${{cp.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description}}
+                                    </div>
+                                `;
+                            }} else if (cp.city) {{
+                                weatherHtml = `
+                                    <div class="weather">
+                                        📍 ${{cp.city}} - Weather data loading...
+                                    </div>
+                                `;
+                            }}
                             
                             if (cp.weather) {{
                                 weatherHtml = `
@@ -651,11 +816,67 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         // Update active requests list
                         updateActiveRequests(data.active_requests_details || []);
                         
+                        // Update errors section
+                        updateErrors(data.system_errors || [], data.error_summary || {{}});
+                        
                         // Update timestamp
                         document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
                     }} catch (error) {{
                         console.error('Error updating dashboard:', error);
                     }}
+                }}
+                
+                function updateErrors(errors, summary) {{
+                    const container = document.getElementById('errors-list');
+                    const section = document.getElementById('errors-section');
+                    const summaryEl = document.getElementById('error-summary');
+                    const errorCountEl = document.getElementById('error-count');
+                    
+                    if (!container || !section) return;
+                    
+                    const activeErrors = errors.filter(e => !e.resolved);
+                    errorCountEl.textContent = activeErrors.length;
+                    
+                    if (activeErrors.length === 0) {{
+                        section.classList.add('no-errors');
+                        container.innerHTML = '<p style="color: #2e7d32; text-align: center;">✅ No active errors - All systems operational</p>';
+                        summaryEl.style.display = 'none';
+                        return;
+                    }}
+                    
+                    section.classList.remove('no-errors');
+                    summaryEl.style.display = 'flex';
+                    
+                    // Update summary
+                    let summaryHtml = '';
+                    if (summary.by_severity) {{
+                        for (const [severity, count] of Object.entries(summary.by_severity)) {{
+                            summaryHtml += `<div class="error-stat">${{severity}}: <span>${{count}}</span></div>`;
+                        }}
+                    }}
+                    summaryEl.innerHTML = summaryHtml;
+                    
+                    // Update error list
+                    container.innerHTML = activeErrors.slice(0, 10).map(err => {{
+                        const severityClass = err.severity.toLowerCase();
+                        const badgeClass = err.severity === 'CRITICAL' ? 'critical' : 
+                                          err.severity === 'ERROR' ? 'error' :
+                                          err.severity === 'WARNING' ? 'warning' : 'info';
+                        return `
+                            <div class="error-item ${{severityClass}}">
+                                <div class="error-content">
+                                    <div class="error-message">⚠️ ${{err.message}}</div>
+                                    ${{err.technical_detail ? `<div class="error-detail">${{err.technical_detail}}</div>` : ''}}
+                                    <div class="error-meta">
+                                        <span class="error-badge ${{badgeClass}}">${{err.severity}}</span>
+                                        <span>Source: ${{err.source}}</span>
+                                        <span>Target: ${{err.target}}</span>
+                                        <span>${{formatTime(err.timestamp)}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }}).join('');
                 }}
                 
                 function updateActiveRequests(requests) {{
@@ -702,10 +923,13 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 }}
                 
                 // Initial load
+                updateWeather(); // Load weather first
                 updateDashboard();
                 
                 // Auto-refresh every 1 second for real-time updates
                 setInterval(updateDashboard, 1000);
+                // Update weather every 30 seconds
+                setInterval(updateWeather, 30000);
             </script>
         </head>
         <body>
@@ -724,6 +948,20 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     <div class="stat-card">
                         <div class="stat-value" id="currently-charging">{sum(1 for cp in data['charging_points'] if cp['engine_state'] == 'SUPPLYING')}</div>
                         <div class="stat-label">Currently Charging</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="error-count">{data.get('error_summary', {{}}).get('total_active', 0)}</div>
+                        <div class="stat-label">Active Errors</div>
+                    </div>
+                </div>
+                
+                <!-- System Errors Section -->
+                <div class="errors-section {'no-errors' if not data.get('system_errors') else ''}" id="errors-section">
+                    <h2>🚨 System Errors & Alerts</h2>
+                    <div class="error-summary" id="error-summary" style="{'display: none;' if not data.get('system_errors') else ''}">
+                    </div>
+                    <div id="errors-list">
+                        {'<p style="color: #2e7d32; text-align: center;">✅ No active errors - All systems operational</p>' if not data.get('system_errors') else ''}
                     </div>
                 </div>
                 

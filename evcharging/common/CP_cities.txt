@@ -1,6 +1,6 @@
-CP-001,Poznan
-CP-002,Alicante
-CP-003,Istanbul
+CP-001,Istanbul
+CP-002,Ankara
+CP-003,Izmir
 CP-004,Trabzon
 CP-005,Madrid
 CP-006,Ankara

@@ -80,6 +80,8 @@ services:
       CENTRAL_LISTEN_PORT: 9999
       CENTRAL_LOG_LEVEL: INFO
       EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
+      # Enable Kafka message encryption (set to "true" in production)
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
     depends_on:
       kafka:
         condition: service_healthy
@@ -166,6 +168,9 @@ services:
         max-file: "3"
 
   # ========== CHARGING POINT ENGINES (5 CPs) ==========
+  # Note: Each CP_E has its own unique encryption key for secure Kafka communication
+  # Keys are loaded from EV_CP_ENCRYPTION_KEY env var or keys/{CP_ID}.key file
+  # Set EV_KAFKA_ENCRYPTION=true to enable encryption (default: false for lab)
   
   ev-cp-e-1:
     build:
@@ -180,6 +185,10 @@ services:
       CP_ENGINE_KW_RATE: 22.0
       CP_ENGINE_EURO_RATE: 0.30
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      # Kafka encryption (set to "true" in production)
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      # Per-CP unique encryption key (base64 encoded) - each CP has different key
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -200,6 +209,10 @@ services:
       CP_ENGINE_KW_RATE: 50.0
       CP_ENGINE_EURO_RATE: 0.35
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      # Kafka encryption (set to "true" in production)
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      # Per-CP unique encryption key (base64 encoded) - each CP has different key
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started

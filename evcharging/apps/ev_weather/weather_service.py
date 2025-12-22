@@ -5,12 +5,20 @@ Polls OpenWeather API and provides temperature data for charging stations.
 
 import asyncio
 import aiohttp
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from loguru import logger
 
 from .config import WeatherConfig
 from .location_manager import LocationManager
+from evcharging.common.error_manager import (
+    ErrorManager, 
+    ErrorCategory, 
+    ErrorSeverity,
+    ErrorSource,
+    report_service_error,
+    report_connection_error
+)
 
 
 class WeatherData:
@@ -50,6 +58,11 @@ class WeatherService:
         self.latest_data: Dict[str, WeatherData] = {}
         self._running = False
         self._session: Optional[aiohttp.ClientSession] = None
+        
+        # Initialize error manager
+        self.error_manager = ErrorManager()
+        self._consecutive_api_failures = 0
+        self._max_consecutive_failures = 3
     
     async def start(self):
         """Start the weather polling service."""
@@ -87,13 +100,41 @@ class WeatherService:
                 tasks = [self._fetch_weather(city) for city in locations]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
+                # Track failures for this poll cycle
+                poll_failures = 0
+                
                 # Update latest data
                 for result in results:
                     if isinstance(result, WeatherData):
                         self.latest_data[result.city] = result
                         logger.info(f"🌡️  {result}")
                     elif isinstance(result, Exception):
+                        poll_failures += 1
                         logger.error(f"Weather fetch error: {result}")
+                
+                # Track consecutive failures for overall service health
+                if poll_failures == len(results) and len(results) > 0:
+                    self._consecutive_api_failures += 1
+                    if self._consecutive_api_failures >= self._max_consecutive_failures:
+                        # Report persistent service error
+                        self.error_manager.report_error(
+                            category=ErrorCategory.SERVICE,
+                            source=ErrorSource.WEATHER,
+                            target="OpenWeather API",
+                            message="Unable to access weather data. OpenWeather connection unavailable.",
+                            severity=ErrorSeverity.ERROR,
+                            technical_detail=f"{poll_failures} consecutive failures"
+                        )
+                else:
+                    # Reset counter on any success
+                    if self._consecutive_api_failures >= self._max_consecutive_failures:
+                        # Resolve the error if we recover
+                        self.error_manager.resolve_errors_for_target(
+                            target="OpenWeather API",
+                            category=ErrorCategory.SERVICE,
+                            resolution_message="OpenWeather API connection restored"
+                        )
+                    self._consecutive_api_failures = 0
                 
                 # Remove data for locations no longer monitored
                 current_cities = set(locations)
@@ -108,6 +149,14 @@ class WeatherService:
                 break
             except Exception as e:
                 logger.error(f"Polling loop error: {e}")
+                self.error_manager.report_error(
+                    category=ErrorCategory.SYSTEM,
+                    source=ErrorSource.WEATHER,
+                    target="Weather Service",
+                    message=f"Weather polling loop error: {str(e)}",
+                    severity=ErrorSeverity.ERROR,
+                    technical_detail=str(e)
+                )
                 await asyncio.sleep(self.config.polling_interval)
     
     async def _fetch_weather(self, city: str) -> WeatherData:
@@ -130,11 +179,49 @@ class WeatherService:
             async with self._session.get(self.config.base_url, params=params) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"API error for {city}: {response.status} - {error_text}")
+                    error_msg = f"API error for {city}: {response.status} - {error_text}"
+                    # Report specific city weather fetch error
+                    self.error_manager.report_error(
+                        category=ErrorCategory.SERVICE,
+                        source=ErrorSource.WEATHER,
+                        target=city,
+                        message=f"Unable to fetch weather for {city}: HTTP {response.status}",
+                        severity=ErrorSeverity.WARNING,
+                        technical_detail=error_text[:100]
+                    )
+                    raise Exception(error_msg)
                 
                 data = await response.json()
+                # Resolve any previous error for this city
+                self.error_manager.resolve_errors_for_target(
+                    target=city,
+                    category=ErrorCategory.SERVICE,
+                    resolution_message=f"Weather data for {city} successfully retrieved"
+                )
                 return self._parse_weather_data(city, data)
                 
+        except aiohttp.ClientConnectorError as e:
+            # Network connectivity error
+            self.error_manager.report_error(
+                category=ErrorCategory.CONNECTION,
+                source=ErrorSource.WEATHER,
+                target="OpenWeather API",
+                message=f"Network error accessing weather service",
+                severity=ErrorSeverity.ERROR,
+                technical_detail=str(e)
+            )
+            raise
+        except aiohttp.ClientError as e:
+            # General HTTP client error
+            self.error_manager.report_error(
+                category=ErrorCategory.CONNECTION,
+                source=ErrorSource.WEATHER,
+                target=city,
+                message=f"HTTP client error for weather API",
+                severity=ErrorSeverity.WARNING,
+                technical_detail=str(e)
+            )
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch weather for {city}: {e}")
             raise
@@ -181,3 +268,21 @@ class WeatherService:
     def get_weather_data(self, city: str) -> Optional[WeatherData]:
         """Get full weather data for a city."""
         return self.latest_data.get(city)
+    
+    def get_errors(self) -> List[Dict[str, Any]]:
+        """
+        Get all current errors from the weather service.
+        
+        Returns:
+            List of error dictionaries for display
+        """
+        return self.error_manager.get_errors_for_display()
+    
+    def get_error_summary(self) -> Dict[str, int]:
+        """
+        Get a summary of errors by severity.
+        
+        Returns:
+            Dictionary with severity counts
+        """
+        return self.error_manager.get_error_summary()

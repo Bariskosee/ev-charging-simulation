@@ -189,9 +189,16 @@ def create_security_api(controller: EVCentralController) -> FastAPI:
         """Verify admin API key with audit logging."""
         ctx = get_audit_context_or_default(request)
         
-        # In production, load from secure config
+        # Load from environment - no hardcoded fallback for security
         import os
-        expected_key = os.environ.get("EV_ADMIN_KEY", "admin-secret-change-in-production")
+        expected_key = os.environ.get("EV_ADMIN_KEY")
+        
+        if not expected_key:
+            logger.error("EV_ADMIN_KEY environment variable not set - admin operations disabled")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin operations are not configured"
+            )
         
         if not x_admin_key or x_admin_key != expected_key:
             # Log unauthorized admin access attempt as security incident
@@ -752,13 +759,25 @@ def create_security_api(controller: EVCentralController) -> FastAPI:
                         "has_encryption_key": cp.has_encryption_key,
                         "last_auth_time": cp.last_auth_time.isoformat() if cp.last_auth_time else None,
                         "engine_state": cp.state.value,
-                        "display_state": cp.get_display_state()
+                        "display_state": cp.get_display_state(),
+                        # Encryption error display
+                        "communication_status": cp.communication_status,
+                        "encryption_error": cp.encryption_error,
+                        "encryption_error_type": cp.encryption_error_type,
+                        "encryption_error_timestamp": (
+                            cp.encryption_error_timestamp.isoformat() 
+                            if cp.encryption_error_timestamp else None
+                        )
                     }
                     for cp in controller.charging_points.values()
                 ],
                 "total_cps": len(controller.charging_points),
                 "authenticated_cps": sum(1 for cp in controller.charging_points.values() if cp.is_authenticated),
-                "active_cps": sum(1 for cp in controller.charging_points.values() if cp.security_status == CPSecurityStatus.ACTIVE)
+                "active_cps": sum(1 for cp in controller.charging_points.values() if cp.security_status == CPSecurityStatus.ACTIVE),
+                "encryption_error_cps": sum(
+                    1 for cp in controller.charging_points.values() 
+                    if cp.communication_status == "ENCRYPTION_ERROR"
+                )
             }
         
         except Exception as e:
@@ -767,6 +786,37 @@ def create_security_api(controller: EVCentralController) -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to get security statuses: {str(e)}"
             )
+    
+    @app.get(
+        "/security/encryption-errors",
+        summary="Get all encryption errors",
+        description="Get all active encryption/decryption errors across CPs"
+    )
+    async def get_encryption_errors():
+        """Get all active encryption errors."""
+        from evcharging.common.encrypted_kafka import get_encryption_error_tracker
+        
+        tracker = get_encryption_error_tracker()
+        
+        return {
+            "active_errors": tracker.get_error_list(),
+            "error_count": len(tracker.get_all_errors()),
+            "recent_history": tracker.get_history(limit=20),
+            "cp_errors": [
+                {
+                    "cp_id": cp.cp_id,
+                    "communication_status": cp.communication_status,
+                    "encryption_error": cp.encryption_error,
+                    "encryption_error_type": cp.encryption_error_type,
+                    "encryption_error_timestamp": (
+                        cp.encryption_error_timestamp.isoformat() 
+                        if cp.encryption_error_timestamp else None
+                    )
+                }
+                for cp in controller.charging_points.values()
+                if cp.communication_status == "ENCRYPTION_ERROR"
+            ]
+        }
     
     @app.get("/health", summary="Health check")
     async def health_check():

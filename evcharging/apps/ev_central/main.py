@@ -31,9 +31,20 @@ from evcharging.common.circuit_breaker import CircuitBreaker, CircuitState
 from evcharging.common.database import FaultHistoryDB, CPSecurityDB, CPRegistryDB
 from evcharging.common.security import create_security_manager
 from evcharging.common.cp_security import CPSecurityService, CPSecurityStatus
+from evcharging.common.encrypted_kafka import (
+    EncryptedKafkaHandler, 
+    create_encrypted_kafka_handler,
+    get_encryption_error_tracker,
+    EncryptionErrorType
+)
 
 from evcharging.apps.ev_central.dashboard import create_dashboard_app
 from evcharging.apps.ev_central.tcp_server import TCPControlServer
+from evcharging.common.error_manager import (
+    ErrorManager, ErrorCategory, ErrorSeverity, ErrorSource,
+    get_error_manager, report_connection_error, report_cp_unavailable,
+    report_communication_error, report_service_error, resolve_target_errors
+)
 
 
 class ChargingPoint:
@@ -72,6 +83,29 @@ class ChargingPoint:
         self.security_status: CPSecurityStatus = CPSecurityStatus.ACTIVE
         self.last_auth_time: datetime | None = None
         self.has_encryption_key: bool = False
+        
+        # Encryption error tracking for display on interfaces
+        self.encryption_error: str | None = None
+        self.encryption_error_type: str | None = None
+        self.encryption_error_timestamp: datetime | None = None
+        self.communication_status: str = "OK"  # OK, ENCRYPTION_ERROR, KEY_MISMATCH
+    
+    def set_encryption_error(self, error_type: str, message: str):
+        """Record an encryption error for display."""
+        self.encryption_error = message
+        self.encryption_error_type = error_type
+        self.encryption_error_timestamp = utc_now()
+        self.communication_status = "ENCRYPTION_ERROR"
+        logger.error(f"CP {self.cp_id} encryption error: {error_type} - {message}")
+    
+    def clear_encryption_error(self):
+        """Clear encryption error (recovery)."""
+        if self.encryption_error:
+            logger.info(f"CP {self.cp_id} encryption recovered - communication restored")
+        self.encryption_error = None
+        self.encryption_error_type = None
+        self.encryption_error_timestamp = None
+        self.communication_status = "OK"
     
     def is_available(self) -> bool:
         """Check if CP is available for new charging session."""
@@ -94,9 +128,20 @@ class ChargingPoint:
         )
 
     def record_monitor_heartbeat(self):
-        """Record heartbeat received from monitor."""
+        """Record heartbeat received from monitor.
+        
+        Also restores CP to ACTIVATED state if it was marked DISCONNECTED
+        due to heartbeat timeout.
+        """
         self.monitor_last_seen = utc_now()
         self.monitor_status = ChargingPoint.MonitorStatus.OK
+        
+        # Restore to ACTIVATED if was marked DISCONNECTED due to timeout
+        if self.state == CPState.DISCONNECTED and not self.is_faulty:
+            self.state = CPState.ACTIVATED
+            self.engine_status_known = False  # We don't know actual engine state yet
+            self.last_update = utc_now()
+            logger.info(f"CP {self.cp_id}: Monitor heartbeat received - restored to ACTIVATED")
 
     def mark_monitor_down(self):
         """Flag the monitor as disconnected."""
@@ -112,6 +157,8 @@ class ChargingPoint:
             return "BROKEN"
         if self.engine_status_known and self.state in {CPState.FAULT, CPState.DISCONNECTED}:
             return "BROKEN"
+        if self.communication_status == "ENCRYPTION_ERROR":
+            return "ENCRYPTION_ERROR"
         if self.security_status == CPSecurityStatus.REVOKED:
             return "REVOKED"
         if self.security_status == CPSecurityStatus.OUT_OF_SERVICE:
@@ -137,9 +184,15 @@ class EVCentralController:
         self.security_db = CPSecurityDB(config.db_url or "ev_charging.db")
         self.registry_db = CPRegistryDB(config.db_url or "ev_charging.db")
         
-        # Initialize security manager with secret key
-        # In production, load from secure config/environment
-        secret_key = os.environ.get("EV_SECURITY_SECRET", "dev-secret-key-change-in-production-min-32-chars!!!")
+        # Initialize security manager with secret key from environment
+        # MUST match REGISTRY_SECRET_KEY for token validation to work
+        secret_key = os.environ.get("EV_SECURITY_SECRET")
+        if not secret_key:
+            raise ValueError(
+                "EV_SECURITY_SECRET environment variable is required. "
+                "This MUST match REGISTRY_SECRET_KEY for JWT token validation to work."
+            )
+        
         self.security_manager = create_security_manager(
             secret_key=secret_key,
             token_expiration_hours=24,
@@ -155,7 +208,58 @@ class EVCentralController:
             db_path=config.db_url or "ev_charging.db"
         )
         
-        logger.info("EV Central Controller initialized with security extensions")
+        # Initialize encrypted Kafka handler for secure CP communication
+        # Enable encryption based on environment (disabled in lab mode for compatibility)
+        encryption_enabled = os.environ.get("EV_KAFKA_ENCRYPTION", "false").lower() == "true"
+        self.encrypted_kafka = create_encrypted_kafka_handler(
+            security_service=self.cp_security,
+            encryption_enabled=encryption_enabled
+        )
+        self.encryption_error_tracker = get_encryption_error_tracker()
+        
+        # System events for restoration/recovery tracking (displayed on dashboard)
+        self.system_events: list[dict] = []
+        self._max_system_events = 50  # Keep last 50 events
+        
+        # Initialize error manager for centralized error tracking
+        self.error_manager = get_error_manager()
+        
+        logger.info(
+            f"EV Central Controller initialized with security extensions "
+            f"(Kafka encryption: {'enabled' if encryption_enabled else 'disabled'})"
+        )
+    
+    def _add_system_event(self, event_type: str, component: str, message: str, severity: str = "INFO"):
+        """Add a system event for display on dashboard.
+        
+        Args:
+            event_type: Type of event (RESTORATION, FAILURE, WARNING, etc.)
+            component: Component name (CP-001, Kafka, Central, etc.)
+            message: Human-readable message
+            severity: INFO, WARNING, ERROR, SUCCESS
+        """
+        event = {
+            "timestamp": utc_now().isoformat(),
+            "type": event_type,
+            "component": component,
+            "message": message,
+            "severity": severity
+        }
+        self.system_events.insert(0, event)  # Add to beginning (newest first)
+        
+        # Trim to max size
+        if len(self.system_events) > self._max_system_events:
+            self.system_events = self.system_events[:self._max_system_events]
+        
+        # Log based on severity
+        if severity == "ERROR":
+            logger.error(f"[{event_type}] {component}: {message}")
+        elif severity == "WARNING":
+            logger.warning(f"[{event_type}] {component}: {message}")
+        elif severity == "SUCCESS":
+            logger.info(f"✅ [{event_type}] {component}: {message}")
+        else:
+            logger.info(f"[{event_type}] {component}: {message}")
     
     async def start(self):
         """Initialize and start the central controller."""
@@ -421,6 +525,22 @@ class EVCentralController:
         
         # Record fault event in database
         self.db.record_fault_event(cp_id, "FAULT", reason)
+        
+        # Add system event for dashboard display
+        self._add_system_event(
+            "FAILURE",
+            cp_id,
+            f"CP {cp_id} marked as FAULTY: {reason}",
+            "ERROR"
+        )
+        
+        # Report error to error manager for centralized tracking
+        report_cp_unavailable(
+            source=ErrorSource.CENTRAL,
+            cp_id=cp_id,
+            reason=f"CP out of service. {reason}"
+        )
+        
         logger.warning(
             f"CP {cp_id} marked as FAULTY: {reason} - Engine state set to FAULT "
             f"(Circuit: {cp.circuit_breaker.get_state().value})"
@@ -434,10 +554,17 @@ class EVCentralController:
                     cp_id=cp_id,
                     payload={"reason": reason}
                 )
-                await self.producer.send(TOPICS["CENTRAL_COMMANDS"], command, key=cp_id)
+                await self._send_encrypted_command(cp_id, command)
                 logger.info(f"Sent STOP_CP command to {cp_id} due to fault: {reason}")
             except Exception as e:
                 logger.error(f"Failed to send STOP_CP command to {cp_id}: {e}")
+                # Report command sending failure
+                report_communication_error(
+                    source=ErrorSource.CENTRAL,
+                    target=cp_id,
+                    component=f"CP {cp_id}",
+                    detail=f"Failed to send STOP_CP command: {e}"
+                )
         else:
             logger.warning(f"CP {cp_id} marked as faulty but no Kafka producer available")
 
@@ -464,6 +591,17 @@ class EVCentralController:
             # Record recovery event in database
             self.db.record_fault_event(cp_id, "RECOVERY", "Health check restored")
             
+            # Add system event for dashboard display
+            self._add_system_event(
+                "RESTORATION",
+                cp_id,
+                f"CP {cp_id} fault cleared and restored to ACTIVATED state",
+                "SUCCESS"
+            )
+            
+            # Resolve errors for this CP in error manager
+            resolve_target_errors(cp_id, f"CP {cp_id} recovered - health check restored")
+            
             logger.info(
                 f"CP {cp_id} fault cleared, state set to ACTIVATED "
                 f"(Circuit: {cp.circuit_breaker.get_state().value})"
@@ -475,7 +613,21 @@ class EVCentralController:
         """Record heartbeat from CP Monitor."""
         if cp_id in self.charging_points:
             cp = self.charging_points[cp_id]
+            
+            # Track if this is a restoration (was DOWN, now OK)
+            was_down = cp.monitor_status == ChargingPoint.MonitorStatus.DOWN
+            was_disconnected = cp.state == CPState.DISCONNECTED
+            
             cp.record_monitor_heartbeat()
+            
+            # Log restoration event if recovering from DOWN state
+            if was_down or was_disconnected:
+                self._add_system_event(
+                    "RESTORATION",
+                    cp_id,
+                    f"CP {cp_id} monitor connection restored - service resumed",
+                    "SUCCESS"
+                )
         else:
             logger.warning(f"Heartbeat from unregistered CP monitor: {cp_id} - creating and activating placeholder entry")
             # Create placeholder and immediately activate it since monitor is alive
@@ -574,9 +726,48 @@ class EVCentralController:
                 "session_id": cp.current_session
             }
         )
-        await self.producer.send(TOPICS["CENTRAL_COMMANDS"], command, key=request.cp_id)
+        await self._send_encrypted_command(request.cp_id, command)
         logger.info(f"Sent START_SUPPLY command for CP {request.cp_id}")
     
+    async def _send_encrypted_command(self, cp_id: str, command: CentralCommand):
+        """
+        Send an encrypted command to a CP via Kafka.
+        
+        If encryption is enabled and fails, the error is recorded and displayed
+        on the CP's interface status.
+        
+        Args:
+            cp_id: Target charging point
+            command: Command to send
+        """
+        command_dict = json.loads(command.model_dump_json())
+        
+        if self.encrypted_kafka.encryption_enabled:
+            # Encrypt the command
+            encrypted_msg, error = self.encrypted_kafka.encrypt_message(cp_id, command_dict)
+            
+            if error:
+                # Record error on CP for interface display
+                if cp_id in self.charging_points:
+                    self.charging_points[cp_id].set_encryption_error(
+                        error.error_type.value,
+                        error.message
+                    )
+                logger.error(
+                    f"Failed to encrypt command for CP {cp_id}: {error.message}. "
+                    "Command NOT sent - fix encryption key and retry."
+                )
+                return
+            
+            # Clear any previous encryption error (recovery)
+            if cp_id in self.charging_points:
+                self.charging_points[cp_id].clear_encryption_error()
+            
+            await self.producer.send(TOPICS["CENTRAL_COMMANDS"], encrypted_msg, key=cp_id)
+        else:
+            # Send unencrypted (lab/dev mode)
+            await self.producer.send(TOPICS["CENTRAL_COMMANDS"], command, key=cp_id)
+
     async def handle_cp_status(self, status: CPStatus):
         """Process CP status updates."""
         cp_id = status.cp_id
@@ -763,8 +954,65 @@ class EVCentralController:
             cp_id=cp_id,
             payload={"reason": reason}
         )
-        await self.producer.send(TOPICS["CENTRAL_COMMANDS"], command, key=cp_id)
+        await self._send_encrypted_command(cp_id, command)
         logger.info(f"Sent STOP_SUPPLY command to {cp_id}: {reason}")
+    
+    def _try_decrypt_cp_message(self, value: dict) -> tuple[dict | None, str | None]:
+        """
+        Try to decrypt a message from a CP.
+        
+        Args:
+            value: Raw message from Kafka
+            
+        Returns:
+            Tuple of (decrypted payload, cp_id) or (None, None) on failure
+        """
+        if not isinstance(value, dict):
+            return value, None
+        
+        # Check if message is in encrypted format
+        if "encrypted" not in value or "cp_id" not in value:
+            # Not an encrypted message wrapper - return as-is
+            return value, value.get("cp_id")
+        
+        cp_id = value.get("cp_id")
+        encrypted = value.get("encrypted", False)
+        payload = value.get("payload")
+        
+        if not encrypted:
+            # Unencrypted wrapper - return payload directly
+            if isinstance(payload, dict):
+                return payload, cp_id
+            if isinstance(payload, str):
+                import json
+                return json.loads(payload), cp_id
+            return payload, cp_id
+        
+        # Message is encrypted - try to decrypt
+        if not self.encrypted_kafka.encryption_enabled:
+            # Encryption disabled on Central but CP sent encrypted message
+            logger.warning(
+                f"Received encrypted message from CP {cp_id} but encryption is disabled. "
+                "Enable encryption or reconfigure CP."
+            )
+            return None, cp_id
+        
+        decrypted, error = self.encrypted_kafka.decrypt_message(value)
+        
+        if error:
+            # Record error on CP for interface display
+            if cp_id in self.charging_points:
+                self.charging_points[cp_id].set_encryption_error(
+                    error.error_type.value,
+                    error.message
+                )
+            return None, cp_id
+        
+        # Clear any previous error (recovery)
+        if cp_id in self.charging_points:
+            self.charging_points[cp_id].clear_encryption_error()
+        
+        return decrypted, cp_id
     
     async def process_messages(self):
         """Main message processing loop."""
@@ -774,24 +1022,70 @@ class EVCentralController:
                 value = msg["value"]
                 
                 if topic == TOPICS["DRIVER_REQUESTS"]:
+                    # Driver requests are NOT encrypted (from driver app)
                     request = DriverRequest(**value)
                     await self.handle_driver_request(request)
                 
                 elif topic == TOPICS["CP_STATUS"]:
-                    status = CPStatus(**value)
+                    # Try to decrypt if encrypted
+                    decrypted, cp_id = self._try_decrypt_cp_message(value)
+                    if decrypted is None:
+                        logger.error(f"Failed to decrypt CP_STATUS from {cp_id}")
+                        # Report error for dashboard display
+                        report_communication_error(
+                            source=ErrorSource.CENTRAL,
+                            target=cp_id or "Unknown CP",
+                            component=f"CP {cp_id or 'Unknown'}",
+                            detail="Failed to decrypt or parse CP_STATUS message"
+                        )
+                        continue
+                    status = CPStatus(**decrypted)
                     await self.handle_cp_status(status)
                 
                 elif topic == TOPICS["CP_TELEMETRY"]:
-                    telemetry = CPTelemetry(**value)
+                    # Try to decrypt if encrypted
+                    decrypted, cp_id = self._try_decrypt_cp_message(value)
+                    if decrypted is None:
+                        logger.error(f"Failed to decrypt CP_TELEMETRY from {cp_id}")
+                        # Report error for dashboard display
+                        report_communication_error(
+                            source=ErrorSource.CENTRAL,
+                            target=cp_id or "Unknown CP",
+                            component=f"CP {cp_id or 'Unknown'}",
+                            detail="Failed to decrypt or parse CP_TELEMETRY message"
+                        )
+                        continue
+                    telemetry = CPTelemetry(**decrypted)
                     await self.handle_cp_telemetry(telemetry)
                 
                 elif topic == TOPICS["CP_SESSION_END"]:
                     logger.warning("=== CENTRAL received SESSION_END event")
-                    ticket = CPSessionTicket(**value)
+                    # Try to decrypt if encrypted
+                    decrypted, cp_id = self._try_decrypt_cp_message(value)
+                    if decrypted is None:
+                        logger.error(f"Failed to decrypt CP_SESSION_END from {cp_id}")
+                        # Report error for dashboard display
+                        report_communication_error(
+                            source=ErrorSource.CENTRAL,
+                            target=cp_id or "Unknown CP",
+                            component=f"CP {cp_id or 'Unknown'}",
+                            detail="Failed to decrypt or parse CP_SESSION_END message"
+                        )
+                        continue
+                    ticket = CPSessionTicket(**decrypted)
                     await self.handle_session_end(ticket)
             
             except Exception as e:
                 logger.error(f"Error processing message from {msg.get('topic')}: {e}")
+                # Report message processing error
+                self.error_manager.report_error(
+                    category=ErrorCategory.COMMUNICATION,
+                    source=ErrorSource.CENTRAL,
+                    target=msg.get('topic', 'Unknown'),
+                    message=f"Error processing message. Messages are incomprehensible.",
+                    severity=ErrorSeverity.ERROR,
+                    technical_detail=str(e)
+                )
     
     def get_dashboard_data(self) -> dict:
         """Get current state for dashboard display."""
@@ -812,6 +1106,17 @@ class EVCentralController:
                     "security_status": cp.security_status.value,
                     "is_authenticated": cp.is_authenticated,
                     "has_encryption_key": cp.has_encryption_key,
+                    # Encryption error display for interface
+                    "communication_status": cp.communication_status,
+                    "encryption_error": cp.encryption_error,
+                    "encryption_error_type": cp.encryption_error_type,
+                    "encryption_error_timestamp": (
+                        cp.encryption_error_timestamp.isoformat() 
+                        if cp.encryption_error_timestamp else None
+                    ),
+                    # Fault status for display
+                    "is_faulty": cp.is_faulty,
+                    "fault_reason": cp.fault_reason,
                     "telemetry": (
                         {
                             "kw": cp.last_telemetry.kw,
@@ -825,6 +1130,8 @@ class EVCentralController:
                 }
                 for cp in self.charging_points.values()
             ],
+            # Include global encryption error summary
+            "encryption_errors": self.encryption_error_tracker.get_error_list(),
             "active_requests": len(self.active_requests),
             "active_requests_details": [
                 {
@@ -835,6 +1142,11 @@ class EVCentralController:
                 }
                 for req in self.active_requests.values()
             ],
+            # System events for restoration/failure tracking
+            "system_events": self.system_events[:20],  # Last 20 events for dashboard
+            # Centralized error tracking
+            "system_errors": self.error_manager.get_errors_for_display(limit=30),
+            "error_summary": self.error_manager.get_error_summary(),
         }
 
     def _refresh_monitor_states(self):
@@ -842,6 +1154,14 @@ class EVCentralController:
         now = utc_now()
         for cp in self.charging_points.values():
             if not cp.monitor_last_seen:
+                if cp.monitor_status != ChargingPoint.MonitorStatus.DOWN:
+                    # First time marking as down - add system event
+                    self._add_system_event(
+                        "FAILURE",
+                        cp.cp_id,
+                        f"CP {cp.cp_id} monitor connection lost (no heartbeat received)",
+                        "WARNING"
+                    )
                 cp.mark_monitor_down()
                 # If monitor is down, engine status is unknown
                 if cp.state != CPState.DISCONNECTED:
@@ -850,6 +1170,14 @@ class EVCentralController:
                     cp.last_update = now
                 continue
             if now - cp.monitor_last_seen > self.monitor_timeout:
+                if cp.monitor_status != ChargingPoint.MonitorStatus.DOWN:
+                    # First time marking as down due to timeout - add system event
+                    self._add_system_event(
+                        "FAILURE",
+                        cp.cp_id,
+                        f"CP {cp.cp_id} monitor heartbeat timeout - connection lost",
+                        "WARNING"
+                    )
                 cp.mark_monitor_down()
                 # If monitor heartbeat timed out, engine status is unknown
                 if cp.state != CPState.DISCONNECTED:

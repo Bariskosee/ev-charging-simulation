@@ -205,3 +205,108 @@ class WeatherReport(BaseModel):
             }
         }
     )
+
+
+class ErrorCategory(str, Enum):
+    """Categories of system errors."""
+    CONNECTION = "CONNECTION"           # Network connectivity issues
+    COMMUNICATION = "COMMUNICATION"     # Message parsing/protocol errors
+    CP_UNAVAILABLE = "CP_UNAVAILABLE"   # CP out of service
+    AUTHENTICATION = "AUTHENTICATION"   # Security/credential errors
+    SERVICE = "SERVICE"                 # External service failures
+    SESSION = "SESSION"                 # Charging session errors
+    SYSTEM = "SYSTEM"                   # Internal system errors
+
+
+class ErrorSeverity(str, Enum):
+    """Severity levels for errors."""
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class SystemErrorMessage(BaseModel):
+    """
+    System error message for inter-service communication.
+    Used to propagate errors between Central, CPs, and Driver front-end.
+    """
+    error_id: str = Field(..., description="Unique error identifier")
+    category: ErrorCategory = Field(..., description="Error category")
+    severity: ErrorSeverity = Field(default=ErrorSeverity.ERROR, description="Error severity")
+    source: str = Field(..., description="Component that generated the error")
+    target: str = Field(..., description="Affected component or resource")
+    message: str = Field(..., description="User-friendly error message")
+    technical_detail: Optional[str] = Field(None, description="Technical details for debugging")
+    resolved: bool = Field(default=False, description="Whether error has been resolved")
+    ts: datetime = Field(default_factory=utc_now, description="Error timestamp")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "error_id": "ERR-000001",
+                    "category": "CONNECTION",
+                    "severity": "ERROR",
+                    "source": "CENTRAL",
+                    "target": "CP-001",
+                    "message": "Unable to connect to CP CP-001. Messages are incomprehensible.",
+                    "technical_detail": "JSON parse error at position 42",
+                    "resolved": False,
+                    "ts": "2025-12-22T12:00:00Z"
+                },
+                {
+                    "error_id": "ERR-000002",
+                    "category": "CP_UNAVAILABLE",
+                    "severity": "WARNING",
+                    "source": "CENTRAL",
+                    "target": "CP-002",
+                    "message": "CP CP-002 not available. CP out of service.",
+                    "resolved": False,
+                    "ts": "2025-12-22T12:00:00Z"
+                },
+                {
+                    "error_id": "ERR-000003",
+                    "category": "SERVICE",
+                    "severity": "ERROR",
+                    "source": "WEATHER",
+                    "target": "OpenWeather",
+                    "message": "Unable to access the weather. OpenWeather connection unavailable.",
+                    "resolved": False,
+                    "ts": "2025-12-22T12:00:00Z"
+                }
+            ]
+        }
+    )
+
+
+class ErrorNotification(BaseModel):
+    """
+    Error notification sent to front-end clients (Driver dashboard).
+    Contains display-ready error information.
+    """
+    error_id: str = Field(..., description="Unique error identifier")
+    title: str = Field(..., description="Short error title for display")
+    message: str = Field(..., description="Full error message")
+    severity: ErrorSeverity = Field(default=ErrorSeverity.ERROR, description="Error severity")
+    category: ErrorCategory = Field(..., description="Error category")
+    source: str = Field(..., description="Source component")
+    can_retry: bool = Field(default=False, description="Whether user can retry the operation")
+    is_resolved: bool = Field(default=False, description="Whether error has been resolved")
+    ts: datetime = Field(default_factory=utc_now, description="Notification timestamp")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "error_id": "ERR-000001",
+                "title": "Connection Error",
+                "message": "Unable to connect to charging point CP-001.",
+                "severity": "ERROR",
+                "category": "CONNECTION",
+                "source": "CENTRAL",
+                "can_retry": True,
+                "is_resolved": False,
+                "ts": "2025-12-22T12:00:00Z"
+            }
+        }
+    )

@@ -26,6 +26,11 @@ from evcharging.common.kafka import KafkaProducerHelper, KafkaConsumerHelper, en
 from evcharging.common.messages import DriverRequest, DriverUpdate, MessageStatus, CPSessionTicket
 from evcharging.common.utils import generate_id, utc_now
 from evcharging.common.charging_points import get_metadata
+from evcharging.common.error_manager import (
+    ErrorManager, ErrorCategory, ErrorSeverity, ErrorSource,
+    get_error_manager, report_connection_error, report_communication_error,
+    resolve_target_errors
+)
 from evcharging.apps.ev_driver.dashboard import (
     create_driver_dashboard_app,
     ChargingPointDetail,
@@ -60,6 +65,16 @@ class EVDriver:
         self.central_http_url = config.central_http_url.rstrip("/")
         self.dashboard_port = config.dashboard_port
         self.ticket_file = f"driver_tickets/driver_{self.driver_id}_tickets.txt"
+        
+        # Sync status tracking for fault isolation visibility
+        self._last_central_sync: Optional[datetime] = None
+        self._central_connected: bool = False
+        self._central_error: Optional[str] = None
+        self._consecutive_failures: int = 0
+        self._was_previously_connected: bool = False  # Track if we were ever connected
+        
+        # Initialize error manager for centralized error tracking
+        self.error_manager = get_error_manager()
     
     async def start(self):
         """Initialize and start the driver client."""
@@ -303,7 +318,11 @@ class EVDriver:
     # ------------------------------------------------------------------
 
     async def _poll_central_loop(self):
-        """Poll EV Central dashboard endpoint to keep CP state fresh."""
+        """Poll EV Central dashboard endpoint to keep CP state fresh.
+        
+        Note: This only affects dashboard display. Core charging operations
+        continue via Kafka even if Central's HTTP API is unavailable.
+        """
         logger.info("Driver: starting central polling loop")
         async with httpx.AsyncClient(timeout=5.0) as client:
             while self._running:
@@ -312,10 +331,74 @@ class EVDriver:
                     resp.raise_for_status()
                     payload = resp.json()
                     await self._update_charging_points(payload.get("charging_points", []))
+                    
+                    # Check if this is a restoration (was disconnected, now connected)
+                    was_disconnected = self._was_previously_connected and not self._central_connected
+                    
+                    # Update sync status on success
+                    self._last_central_sync = utc_now()
+                    self._central_connected = True
+                    self._central_error = None
+                    
+                    # Generate restoration notification if recovering from failure
+                    if was_disconnected:
+                        logger.info(
+                            f"Driver: Central dashboard RESTORED after {self._consecutive_failures} failures. "
+                            "Full functionality resumed."
+                        )
+                        # Add user-visible notification
+                        async with self._state_lock:
+                            self.notifications.append(
+                                Notification(
+                                    notification_id=generate_id("note"),
+                                    created_at=utc_now(),
+                                    message="✅ Central dashboard connection restored. All services operational.",
+                                    type="ALERT",
+                                    read=False,
+                                )
+                            )
+                    
+                    self._consecutive_failures = 0
+                    self._was_previously_connected = True
+                    
+                    # Resolve any previous Central connection errors
+                    resolve_target_errors("Central", "Central dashboard connection restored")
+                    
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.debug(f"Driver: central polling error: {exc}")
+                    self._consecutive_failures += 1
+                    self._central_connected = False
+                    self._central_error = str(exc)
+                    
+                    # Log warning only on first failure or every 10th failure
+                    if self._consecutive_failures == 1:
+                        logger.warning(
+                            f"Driver: Central dashboard unreachable - {exc}. "
+                            "CP status display may be stale. Charging operations continue via Kafka."
+                        )
+                        # Report error to error manager for display
+                        report_connection_error(
+                            source=ErrorSource.DRIVER,
+                            target="Central",
+                            service_name="Central dashboard",
+                            detail=str(exc)
+                        )
+                        # Add user-visible notification for first failure
+                        if self._was_previously_connected:
+                            async with self._state_lock:
+                                self.notifications.append(
+                                    Notification(
+                                        notification_id=generate_id("note"),
+                                        created_at=utc_now(),
+                                        message="⚠️ Central dashboard temporarily unavailable. Charging operations continue normally.",
+                                        type="ALERT",
+                                        read=False,
+                                    )
+                                )
+                    elif self._consecutive_failures % 10 == 0:
+                        logger.debug(f"Driver: Central still unreachable ({self._consecutive_failures} failures)")
+                        
                 await asyncio.sleep(1.5)
         logger.info("Driver: central polling loop stopped")
 
@@ -546,6 +629,45 @@ class EVDriver:
             )
             self.session_history.append(SessionHistoryEntry(**cancelled.model_dump(), receipt_url=None))
             return True
+
+    def get_errors(self) -> dict:
+        """Get current system errors for dashboard display."""
+        return {
+            "errors": self.error_manager.get_errors_for_display(
+                source=ErrorSource.DRIVER,
+                limit=20
+            ),
+            "summary": self.error_manager.get_error_summary(),
+            "all_errors": self.error_manager.get_errors_for_display(limit=30),
+        }
+
+    def get_sync_status(self) -> dict:
+        """Get Central dashboard sync status for fault isolation visibility.
+        
+        Returns status information about the connection to Central's HTTP API.
+        Note: Even if Central dashboard is down, charging operations continue via Kafka.
+        """
+        # Calculate staleness
+        stale_threshold_seconds = 10  # Data is "stale" if older than 10 seconds
+        
+        if self._last_central_sync:
+            age_seconds = (utc_now() - self._last_central_sync).total_seconds()
+            is_stale = age_seconds > stale_threshold_seconds
+        else:
+            age_seconds = None
+            is_stale = True
+        
+        return {
+            "central_connected": self._central_connected,
+            "last_sync": self._last_central_sync.isoformat() if self._last_central_sync else None,
+            "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+            "is_stale": is_stale,
+            "error": self._central_error,
+            "consecutive_failures": self._consecutive_failures,
+            # Remind users that core operations are unaffected
+            "kafka_operational": True,  # Kafka is separate from HTTP polling
+            "charging_operations_affected": False,  # Only display is affected
+        }
 
     async def dashboard_stop_session(self, session_id: str) -> Optional[SessionSummary]:
         """Request to stop an active charging session via Central."""

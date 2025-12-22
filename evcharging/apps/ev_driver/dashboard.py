@@ -102,6 +102,22 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
     async def health():
         return {"status": "healthy", "service": "driver-dashboard"}
 
+    @app.get("/sync-status")
+    async def sync_status():
+        """Get Central dashboard synchronization status.
+        
+        Returns:
+            - central_connected: Whether Central's HTTP API is reachable
+            - last_sync: Timestamp of last successful sync
+            - is_stale: True if data may be outdated
+            - kafka_operational: True (Kafka is separate from HTTP)
+            - charging_operations_affected: False (only display affected)
+        
+        Note: Even if Central dashboard is down, charging requests/updates
+        continue via Kafka. Only the CP status display is affected.
+        """
+        return driver.get_sync_status()
+
     # ------------------------------------------------------------------
     # Charging point discovery
     # ------------------------------------------------------------------
@@ -206,6 +222,11 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
         if driver_id != driver.driver_id:
             raise HTTPException(status_code=404, detail="Driver not found")
         return await driver.dashboard_alerts()
+
+    @app.get("/errors")
+    async def get_errors():
+        """Get system errors for dashboard display."""
+        return driver.get_errors()
 
     # ------------------------------------------------------------------
     # HTML Dashboard
@@ -602,6 +623,144 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 .charging-indicator {{
                     animation: pulse 2s infinite;
                 }}
+                
+                /* Sync status indicator styles */
+                .sync-status {{
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 12px;
+                    border-radius: 20px;
+                    font-size: 0.85em;
+                    font-weight: 500;
+                }}
+                
+                .sync-status.connected {{
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                }}
+                
+                .sync-status.disconnected {{
+                    background: #fff3e0;
+                    color: #e65100;
+                }}
+                
+                .sync-status.stale {{
+                    background: #fff8e1;
+                    color: #f57c00;
+                }}
+                
+                .sync-dot {{
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    animation: pulse 2s infinite;
+                }}
+                
+                .sync-dot.connected {{
+                    background: #4caf50;
+                }}
+                
+                .sync-dot.disconnected {{
+                    background: #ff5722;
+                }}
+                
+                .sync-dot.stale {{
+                    background: #ff9800;
+                }}
+                
+                .stale-warning {{
+                    background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+                    border: 2px solid #ff9800;
+                    border-radius: 8px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    display: none;
+                }}
+                
+                .stale-warning.visible {{
+                    display: block;
+                }}
+                
+                .stale-warning h4 {{
+                    color: #e65100;
+                    margin-bottom: 8px;
+                }}
+                
+                .stale-warning p {{
+                    color: #f57c00;
+                    margin: 0;
+                    font-size: 0.9em;
+                }}
+                
+                .stale-warning .reassurance {{
+                    color: #2e7d32;
+                    margin-top: 8px;
+                    font-weight: 500;
+                }}
+                
+                /* System Errors Section */
+                .errors-section {{
+                    background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+                    padding: 20px;
+                    border-radius: 12px;
+                    margin-bottom: 20px;
+                    border-left: 5px solid #f44336;
+                }}
+                .errors-section.no-errors {{
+                    background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+                    border-left-color: #4caf50;
+                }}
+                .errors-section h3 {{
+                    color: #c62828;
+                    margin-bottom: 15px;
+                    font-size: 1.1em;
+                }}
+                .errors-section.no-errors h3 {{
+                    color: #2e7d32;
+                }}
+                .error-item {{
+                    background: white;
+                    padding: 12px;
+                    border-radius: 8px;
+                    margin-bottom: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    border-left: 4px solid #f44336;
+                }}
+                .error-item.warning {{
+                    border-left-color: #ff9800;
+                }}
+                .error-item.info {{
+                    border-left-color: #2196f3;
+                }}
+                .error-message {{
+                    font-weight: bold;
+                    color: #333;
+                    margin-bottom: 5px;
+                    font-size: 0.95em;
+                }}
+                .error-detail {{
+                    font-size: 0.85em;
+                    color: #666;
+                }}
+                .error-meta {{
+                    display: flex;
+                    gap: 10px;
+                    margin-top: 6px;
+                    font-size: 0.8em;
+                    color: #888;
+                }}
+                .error-badge {{
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-size: 0.7em;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }}
+                .error-badge.critical {{ background: #b71c1c; color: white; }}
+                .error-badge.error {{ background: #f44336; color: white; }}
+                .error-badge.warning {{ background: #ff9800; color: white; }}
+                .error-badge.info {{ background: #2196f3; color: white; }}
             </style>
         </head>
         <body>
@@ -612,8 +771,29 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 </h1>
                 
                 <div class="status-bar">
-                    <span>📡 Real-time updates enabled</span>
-                    <span class="last-update">Last update: <span id="last-update">--:--:--</span></span>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <span>📡 Real-time updates enabled</span>
+                        <div id="sync-status" class="sync-status connected">
+                            <span class="sync-dot connected"></span>
+                            <span id="sync-text">Central connected</span>
+                        </div>
+                    </div>
+                    <span class="last-update">Last sync: <span id="last-update">--:--:--</span></span>
+                </div>
+                
+                <!-- Stale Data Warning Banner -->
+                <div id="stale-warning" class="stale-warning">
+                    <h4>⚠️ Central Dashboard Unavailable</h4>
+                    <p>Unable to fetch latest charging point status. Displayed data may be outdated.</p>
+                    <p class="reassurance">✅ Your charging requests and sessions continue to work normally via Kafka.</p>
+                </div>
+                
+                <!-- System Errors Section -->
+                <div id="errors-section" class="errors-section no-errors">
+                    <h3>🚨 System Alerts & Errors</h3>
+                    <div id="errors-list">
+                        <p style="color: #2e7d32; text-align: center;">✅ All systems operational</p>
+                    </div>
                 </div>
                 
                 <!-- Active Session -->
@@ -1027,25 +1207,116 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                     loadChargingPoints();
                 }}
                 
-                function updateTimestamp() {{
-                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+                function updateTimestamp(lastSync) {{
+                    if (lastSync) {{
+                        const date = new Date(lastSync);
+                        document.getElementById('last-update').textContent = date.toLocaleTimeString();
+                    }} else {{
+                        document.getElementById('last-update').textContent = '--:--:--';
+                    }}
+                }}
+                
+                async function updateSyncStatus() {{
+                    try {{
+                        const response = await fetch('/sync-status');
+                        const status = await response.json();
+                        
+                        const syncStatusEl = document.getElementById('sync-status');
+                        const syncTextEl = document.getElementById('sync-text');
+                        const syncDotEl = syncStatusEl.querySelector('.sync-dot');
+                        const staleWarningEl = document.getElementById('stale-warning');
+                        
+                        // Update timestamp from sync status
+                        updateTimestamp(status.last_sync);
+                        
+                        if (status.central_connected && !status.is_stale) {{
+                            // Connected and fresh
+                            syncStatusEl.className = 'sync-status connected';
+                            syncDotEl.className = 'sync-dot connected';
+                            syncTextEl.textContent = 'Central connected';
+                            staleWarningEl.classList.remove('visible');
+                        }} else if (status.central_connected && status.is_stale) {{
+                            // Connected but data is stale
+                            syncStatusEl.className = 'sync-status stale';
+                            syncDotEl.className = 'sync-dot stale';
+                            syncTextEl.textContent = `Data ${Math.round(status.age_seconds)}s old`;
+                            staleWarningEl.classList.remove('visible');
+                        }} else {{
+                            // Disconnected
+                            syncStatusEl.className = 'sync-status disconnected';
+                            syncDotEl.className = 'sync-dot disconnected';
+                            const failCount = status.consecutive_failures;
+                            syncTextEl.textContent = `Central unreachable (${{failCount}} failures)`;
+                            staleWarningEl.classList.add('visible');
+                        }}
+                    }} catch (error) {{
+                        console.error('Error fetching sync status:', error);
+                    }}
                 }}
                 
                 // Initialize
                 loadChargingPoints();
                 loadActiveSession();
                 loadFavorites();
-                updateTimestamp();
+                updateSyncStatus();
+                loadErrors();
                 
                 // Auto-refresh every 2 seconds
                 setInterval(() => {{
                     loadChargingPoints();
                     loadActiveSession();
-                    updateTimestamp();
+                    updateSyncStatus();
+                    loadErrors();
                 }}, 2000);
                 
                 // Refresh favorites every 10 seconds
                 setInterval(loadFavorites, 10000);
+                
+                // Load and display system errors
+                async function loadErrors() {{
+                    try {{
+                        const response = await fetch('/errors');
+                        const data = await response.json();
+                        updateErrorsDisplay(data.all_errors || []);
+                    }} catch (error) {{
+                        console.error('Error loading errors:', error);
+                    }}
+                }}
+                
+                function updateErrorsDisplay(errors) {{
+                    const section = document.getElementById('errors-section');
+                    const container = document.getElementById('errors-list');
+                    if (!section || !container) return;
+                    
+                    const activeErrors = errors.filter(e => !e.resolved);
+                    
+                    if (activeErrors.length === 0) {{
+                        section.classList.add('no-errors');
+                        container.innerHTML = '<p style="color: #2e7d32; text-align: center;">✅ All systems operational</p>';
+                        return;
+                    }}
+                    
+                    section.classList.remove('no-errors');
+                    
+                    container.innerHTML = activeErrors.slice(0, 5).map(err => {{
+                        const severityClass = err.severity.toLowerCase();
+                        const badgeClass = err.severity === 'CRITICAL' ? 'critical' : 
+                                          err.severity === 'ERROR' ? 'error' :
+                                          err.severity === 'WARNING' ? 'warning' : 'info';
+                        const timestamp = err.timestamp ? new Date(err.timestamp).toLocaleTimeString() : '';
+                        return `
+                            <div class="error-item ${{severityClass}}">
+                                <div class="error-message">⚠️ ${{err.message}}</div>
+                                ${{err.technical_detail ? `<div class="error-detail">${{err.technical_detail}}</div>` : ''}}
+                                <div class="error-meta">
+                                    <span class="error-badge ${{badgeClass}}">${{err.severity}}</span>
+                                    <span>${{err.target || ''}}</span>
+                                    <span>${{timestamp}}</span>
+                                </div>
+                            </div>
+                        `;
+                    }}).join('');
+                }}
             </script>
         </body>
         </html>
