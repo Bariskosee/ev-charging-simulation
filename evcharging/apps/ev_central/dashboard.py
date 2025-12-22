@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from typing import TYPE_CHECKING
 from loguru import logger
 
-from evcharging.common.messages import CPRegistration
+from evcharging.common.messages import CPRegistration, WeatherReport
 
 if TYPE_CHECKING:
     from evcharging.apps.ev_central.main import EVCentralController
@@ -163,6 +163,68 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     "ts": cp.last_telemetry.ts.isoformat(),
                 })
         return {"telemetry": telemetry_list}
+
+    @app.get("/cp/{cp_id}/city")
+    async def get_city(cp_id: str):
+        """Get location information about specific charing point."""
+        if cp_id not in controller.charging_points:
+            return {"error": "Charging point not found"}, 404
+        
+        cp = controller.charging_points[cp_id]
+
+        return {
+            "cp_id": cp.cp_id,
+            "state": cp.city,
+        }
+
+    @app.post("/weather/report")
+    async def receive_weather_report(data: WeatherReport):
+        """Receives general weather information about a given city"""
+        city = data.city
+        temperature = data.temperature
+        alert = data.alert
+        weather_status = {}
+        
+        weather_status.append({
+                    "city": city,
+                    "temperature": temperature,
+                    "alert": alert,
+                })
+        
+        controller.weather_by_city[city] = weather_status
+
+        return {"success": True, "city": city}
+
+    @app.post("/weather/alert")
+    async def receive_alert(data: WeatherReport):
+        """Receives alert notification about a given city and sends 
+        the fault notification to each CP in the alerted city"""
+        city = data.city
+        temperature = data.temperature
+        alert = data.alert
+        
+        for cp in controller.charging_points.values():
+            if cp.city == data.city and not cp.is_faulty:
+                await controller.mark_cp_faulty(
+                    cp.cp_id,
+                    reason=f"Weather alert in {data.city}"
+                )
+        
+        return {"success": True, "city": city, "tempearature": temperature, "alert": alert}
+
+    @app.post("/weather/cancel_alert")
+    async def receive_alert_cancel(data: WeatherReport):
+        """Receives alert cancellation and clear the fault in the CPs 
+        in the given city"""
+        city = data.city
+        temperature = data.temperature
+        alert = data.alert
+
+        for cp in controller.charging_points.values():
+            if cp.city == data.city and cp.is_faulty and cp.fault_reason == f"Weather alert in {data.city}":
+                await controller.clear_cp_fault(cp.cp_id)
+        
+        return {"success": True, "city": city, "temperature": temperature, "alert": alert}
     
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):
@@ -355,6 +417,21 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 .refresh-btn:hover {{
                     background: #5568d3;
                 }}
+                .weather {{
+                    margin-top: 10px;
+                    padding: 8px;
+                    border-radius: 6px;
+                    font-size: 0.9em;
+                }}
+                .weather-ok {{
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                }}
+                .weather-alert {{
+                    background: #ffebee;
+                    color: #c62828;
+                    font-weight: bold;
+                }}
             </style>
             <script>
                 // Fetch and update data without page reload
@@ -412,6 +489,22 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                 `;
                             }}
 
+                            let weatherHtml = `
+                                <div class="weather">
+                                    City: ${{cp.city || 'Unknown'}}<br>
+                                    Weather: Unknown
+                                </div>
+                            
+                            if (cp.weather) {{
+                                weatherHtml = `
+                                    <div class="weather ${{cp.weather.alert ? 'weather-alert' : 'weather-ok'}}">
+                                        City: ${cp.city}<br>
+                                        ${{cp.weather.temperature.toFixed(1)}} °C<br>
+                                        Status: ${{cp.weather.alert ? 'ALERT' : 'OK'}}
+                                    </div>
+                                `;
+                            }}
+
                             const statusHtml = `
                                 <div class="telemetry">
                                     <div class="telemetry-row">
@@ -445,6 +538,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                     <div class="cp-id">${{cp.cp_id}}</div>
                                     <span class="state-badge state-${{cp.state}}">${{cp.state}}</span>
                                 </div>
+                                ${{weatherHtml}}
                                 ${{driverHtml}}
                                 ${{sessionHtml}}
                                 ${{statusHtml}}
@@ -575,6 +669,19 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     </div>
                 """
 
+            weather_html = "<div class='weather'> Weather: Unknown</div>"
+
+            weather = cp.get("weather")
+            if weather:
+                css_class = "weather-alert" if weather["alert"] else "weather-ok"
+                weather_html = f"""
+                    <div class="weather {css_class}">
+                        City: {cp.get('city', 'Unknown')}<br>
+                        {weather['temperature']:.1f} °C<br>
+                        Status: {'ALERT' if weather['alert'] else 'OK'}
+                    </div>
+                """
+
             status_html = f"""
                 <div class="telemetry">
                     <div class="telemetry-row">
@@ -607,6 +714,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                             <div class="cp-id">{cp['cp_id']}</div>
                             <span class="state-badge state-{cp['state']}">{cp['state']}</span>
                         </div>
+                        {weather_html}
                         {driver_html}
                         {status_html}
                         {stop_button}

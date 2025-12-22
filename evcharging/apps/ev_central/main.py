@@ -24,6 +24,7 @@ from evcharging.common.messages import (
     DriverRequest, DriverUpdate, MessageStatus, CentralCommand, CommandType,
     CPStatus, CPTelemetry, CPSessionTicket, CPRegistration
 )
+from evcharging.common.charging_points import get_metadata
 from evcharging.common.states import CPState, can_supply
 from evcharging.common.utils import utc_now, generate_id
 from evcharging.common.circuit_breaker import CircuitBreaker, CircuitState
@@ -60,6 +61,7 @@ class ChargingPoint:
             recovery_timeout=30,
             half_open_max_calls=2
         )
+        self.city: str = get_metadata(cp_id).city
         self.monitor_status: ChargingPoint.MonitorStatus = ChargingPoint.MonitorStatus.DOWN
         self.monitor_last_seen: datetime | None = None
         self.engine_status_known: bool = False
@@ -129,6 +131,7 @@ class EVCentralController:
         self._running = False
         self.db = FaultHistoryDB()  # Initialize database
         self.monitor_timeout = timedelta(seconds=5)
+        self.weather_by_city: dict[str, dict] = {}
         
         # Security components
         self.security_db = CPSecurityDB(config.db_url or "ev_charging.db")
@@ -215,6 +218,8 @@ class EVCentralController:
         cp.state = CPState.ACTIVATED
         cp.last_update = utc_now()
         cp.record_monitor_heartbeat()
+        
+        self.weather_by_city.update({get_metadata(cp_id).city: None})
         
         # Auto-authorize CP for lab environment (no EV_Registry dependency)
         cp.is_authenticated = True
@@ -798,6 +803,8 @@ class EVCentralController:
                     "state": cp.get_display_state(),
                     "engine_state": cp.state.value,
                     "monitor_status": cp.monitor_status.value,
+                    "city": cp.city,
+                    "weather": self.weather_by_city.get(cp.city),
                     "current_driver": cp.current_driver,
                     "current_session": cp.current_session,
                     "last_update": cp.last_update.isoformat(),

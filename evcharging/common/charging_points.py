@@ -7,6 +7,15 @@ In a full deployment this would come from an asset registry service.
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+def load_cp_cities(filepath: str) -> dict:
+    mapping = {}
+    with open(filepath, "r") as f:
+        for line in f:
+            cp_id, city = line.strip().split(",")
+            mapping[cp_id] = city
+    return mapping
+
+cp_to_city = load_cp_cities("/app/evcharging/common/CP_cities.txt")
 
 @dataclass(frozen=True)
 class ChargingPointMetadata:
@@ -26,7 +35,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-001",
         name="Central Plaza A1",
         address="123 Main St",
-        city="Metropolis",
+        city=cp_to_city["CP-001"],
         latitude=40.7128,
         longitude=-74.0060,
         connector_type="Type 2",
@@ -37,7 +46,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-002",
         name="Harbor Fast Charge",
         address="5 Harbor Ave",
-        city="Metropolis",
+        city=cp_to_city["CP-002"],
         latitude=40.7000,
         longitude=-74.0100,
         connector_type="CCS",
@@ -48,7 +57,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-003",
         name="Airport Lot C",
         address="Airport Rd",
-        city="Metropolis",
+        city=cp_to_city["CP-003"],
         latitude=40.6890,
         longitude=-74.1745,
         connector_type="Type 2",
@@ -59,7 +68,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-004",
         name="Shopping Mall West",
         address="789 Retail Blvd",
-        city="Metropolis",
+        city=cp_to_city["CP-004"],
         latitude=40.7200,
         longitude=-74.0200,
         connector_type="CCS",
@@ -70,7 +79,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-005",
         name="Downtown Garage B",
         address="42 Park St",
-        city="Metropolis",
+        city=cp_to_city["CP-005"],
         latitude=40.7150,
         longitude=-74.0080,
         connector_type="Type 2",
@@ -81,7 +90,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-006",
         name="Highway Rest Stop",
         address="Mile 45 Interstate",
-        city="Metropolis",
+        city=cp_to_city["CP-006"],
         latitude=40.6800,
         longitude=-74.1500,
         connector_type="CCS",
@@ -92,7 +101,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-007",
         name="University Campus",
         address="100 College Ave",
-        city="Metropolis",
+        city=cp_to_city["CP-007"],
         latitude=40.7300,
         longitude=-74.0300,
         connector_type="Type 2",
@@ -103,7 +112,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-008",
         name="Tech Park North",
         address="250 Innovation Dr",
-        city="Metropolis",
+        city=cp_to_city["CP-008"],
         latitude=40.7400,
         longitude=-74.0400,
         connector_type="CCS",
@@ -114,7 +123,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-009",
         name="Sports Arena",
         address="500 Stadium Way",
-        city="Metropolis",
+        city=cp_to_city["CP-009"],
         latitude=40.7050,
         longitude=-74.0150,
         connector_type="Type 2",
@@ -125,7 +134,7 @@ METADATA: Dict[str, ChargingPointMetadata] = {
         cp_id="CP-010",
         name="Beachfront Plaza",
         address="1 Ocean Drive",
-        city="Metropolis",
+        city=cp_to_city["CP-010"],
         latitude=40.6700,
         longitude=-74.0050,
         connector_type="CCS",
