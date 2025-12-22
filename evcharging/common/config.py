@@ -49,12 +49,31 @@ class CPMonitorConfig(BaseSettings):
     """Configuration for CP Monitor service."""
     
     cp_id: str = Field(..., description="Charging Point ID")
+    location: str = Field(default="Unknown", description="CP location (city/address)")
     cp_e_host: str = Field(default="localhost", description="CP Engine host")
     cp_e_port: int = Field(default=8001, description="CP Engine port")
     central_host: str = Field(default="localhost", description="Central host")
     central_port: int = Field(default=8000, description="Central HTTP port")
     health_interval: float = Field(default=1.0, description="Health check interval (seconds)")
     log_level: str = Field(default="INFO", description="Logging level")
+    
+    # EV_Registry settings for secure CP authentication
+    registry_url: str = Field(
+        default="http://localhost:8080",
+        description="EV_Registry API URL"
+    )
+    registry_enabled: bool = Field(
+        default=True,
+        description="Enable registration with EV_Registry (set to False for legacy mode)"
+    )
+    registry_verify_ssl: bool = Field(
+        default=True,
+        description="Verify SSL certificates when connecting to Registry"
+    )
+    registry_admin_key: Optional[str] = Field(
+        default=None,
+        description="Admin API key for new CP registration"
+    )
     
     model_config = SettingsConfigDict(
         env_prefix="CP_MONITOR_",

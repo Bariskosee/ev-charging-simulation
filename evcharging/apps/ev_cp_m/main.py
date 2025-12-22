@@ -2,7 +2,8 @@
 EV CP Monitor - Charging Point Monitor service.
 
 Responsibilities:
-- Register CP with Central on startup
+- Register CP with EV_Registry (secure authentication)
+- Register CP with EV_Central (using Registry-issued token)
 - Perform periodic health checks to CP Engine
 - Detect and report faults
 - Allow manual fault simulation via keyboard
@@ -19,7 +20,7 @@ from loguru import logger
 from evcharging.common.config import CPMonitorConfig
 from evcharging.common.messages import CPRegistration
 from evcharging.common.utils import utc_now
-from evcharging.common.utils import utc_now
+from evcharging.common.registry_client import RegistryClient
 
 
 class CPMonitor:
@@ -31,16 +32,68 @@ class CPMonitor:
         self.is_healthy = True
         self.fault_simulated = False
         self._running = False
+        
+        # Initialize Registry client for secure authentication
+        self.registry_client: RegistryClient | None = None
+        if config.registry_enabled:
+            self.registry_client = RegistryClient(
+                registry_url=config.registry_url,
+                verify_ssl=config.registry_verify_ssl,
+                admin_api_key=config.registry_admin_key
+            )
     
     async def start(self):
         """Initialize and start the CP Monitor."""
         logger.info(f"Starting CP Monitor for {self.cp_id}")
         
-        # Register with Central
+        # Step 1: Register with EV_Registry if enabled (secure channel)
+        if self.config.registry_enabled and self.registry_client:
+            await self._register_with_registry()
+        
+        # Step 2: Register with Central (uses Registry token if available)
         await self.register_with_central()
         
         self._running = True
         logger.info(f"CP Monitor {self.cp_id} started successfully")
+    
+    async def _register_with_registry(self):
+        """Register with EV_Registry service for secure authentication."""
+        logger.info(f"Registering {self.cp_id} with EV_Registry at {self.config.registry_url}...")
+        
+        metadata = {
+            "cp_e_host": self.config.cp_e_host,
+            "cp_e_port": self.config.cp_e_port
+        }
+        
+        max_retries = 5
+        retry_delay = 2.0
+        
+        for attempt in range(1, max_retries + 1):
+            success = await self.registry_client.register(
+                cp_id=self.cp_id,
+                location=self.config.location,
+                metadata=metadata
+            )
+            
+            if success:
+                logger.info(
+                    f"✓ CP {self.cp_id} registered with EV_Registry "
+                    f"(token expires: {self.registry_client.token_expires_at})"
+                )
+                return
+            
+            if attempt < max_retries:
+                logger.warning(
+                    f"Registry registration attempt {attempt}/{max_retries} failed, "
+                    f"retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 10.0)
+        
+        logger.warning(
+            f"⚠️ Could not register with EV_Registry after {max_retries} attempts. "
+            "Continuing with direct Central registration (insecure mode)."
+        )
     
     async def stop(self):
         """Stop the monitor gracefully."""
@@ -48,7 +101,10 @@ class CPMonitor:
         self._running = False
     
     async def register_with_central(self):
-        """Register or authenticate CP with Central with retry logic."""
+        """Register or authenticate CP with Central with retry logic.
+        
+        If registered with EV_Registry, includes JWT token for secure authentication.
+        """
         registration = CPRegistration(
             cp_id=self.cp_id,
             cp_e_host=self.config.cp_e_host,
@@ -57,20 +113,36 @@ class CPMonitor:
         
         central_url = f"http://{self.config.central_host}:{self.config.central_port}"
         
+        # Build headers with authentication token if available from Registry
+        headers = {"Content-Type": "application/json"}
+        if self.registry_client and self.registry_client.token:
+            headers["Authorization"] = f"Bearer {self.registry_client.token}"
+            logger.info(f"Using Registry-issued token for Central authentication")
+        
         max_retries = 10
         retry_delay = 2.0  # Start with 2 seconds
         
         for attempt in range(1, max_retries + 1):
             try:
+                # Ensure token is valid before each attempt
+                if self.registry_client and self.registry_client.is_registered:
+                    if self.registry_client.is_token_expired():
+                        logger.info("Token expired, refreshing...")
+                        await self.registry_client.authenticate()
+                        if self.registry_client.token:
+                            headers["Authorization"] = f"Bearer {self.registry_client.token}"
+                
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"{central_url}/cp/register",
                         json=registration.model_dump(mode='json'),
+                        headers=headers,
                         timeout=5.0
                     )
                     
                     if response.status_code == 200:
-                        logger.info(f"CP {self.cp_id} registered with Central successfully (attempt {attempt})")
+                        auth_mode = "authenticated" if "Authorization" in headers else "unauthenticated"
+                        logger.info(f"CP {self.cp_id} registered with Central successfully ({auth_mode}, attempt {attempt})")
                         return  # Success - exit retry loop
                     else:
                         logger.warning(f"Failed to register CP (attempt {attempt}/{max_retries}): {response.status_code} {response.text}")
@@ -88,22 +160,46 @@ class CPMonitor:
                 logger.error(f"Failed to register CP {self.cp_id} after {max_retries} attempts - will retry via heartbeat")
 
     async def send_heartbeat(self):
-        """Send heartbeat to Central indicating monitor is alive."""
+        """Send heartbeat to Central indicating monitor is alive.
+        
+        Includes JWT token for authenticated communication.
+        """
         central_url = f"http://{self.config.central_host}:{self.config.central_port}"
         heartbeat = {
             "cp_id": self.cp_id,
             "ts": utc_now().isoformat()
         }
+        
+        # Include authentication token if available
+        headers = {}
+        if self.registry_client and self.registry_client.token:
+            # Refresh token if needed
+            if self.registry_client.is_token_expired():
+                await self.registry_client.authenticate()
+            if self.registry_client.token:
+                headers["Authorization"] = f"Bearer {self.registry_client.token}"
 
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
                     f"{central_url}/cp/heartbeat",
                     json=heartbeat,
+                    headers=headers,
                     timeout=5.0
                 )
         except Exception as e:
             logger.debug(f"Heartbeat send failed for {self.cp_id}: {e}")
+    
+    async def _get_auth_headers(self) -> dict:
+        """Get authentication headers for Central API calls."""
+        headers = {}
+        if self.registry_client and self.registry_client.token:
+            # Refresh token if needed
+            if self.registry_client.is_token_expired():
+                await self.registry_client.authenticate()
+            if self.registry_client.token:
+                headers["Authorization"] = f"Bearer {self.registry_client.token}"
+        return headers
     
     async def notify_central_fault(self):
         """Notify Central that this CP has a fault."""
@@ -116,10 +212,13 @@ class CPMonitor:
                 "ts": utc_now().isoformat()
             }
             
+            headers = await self._get_auth_headers()
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{central_url}/cp/fault",
                     json=fault_data,
+                    headers=headers,
                     timeout=5.0
                 )
                 
@@ -142,10 +241,13 @@ class CPMonitor:
                 "ts": utc_now().isoformat()
             }
             
+            headers = await self._get_auth_headers()
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{central_url}/cp/fault",
                     json=health_data,
+                    headers=headers,
                     timeout=5.0
                 )
                 
@@ -249,17 +351,29 @@ async def main():
     """Main entry point for CP Monitor service."""
     parser = argparse.ArgumentParser(description="EV CP Monitor")
     parser.add_argument("--cp-id", type=str, help="Charging Point ID")
+    parser.add_argument("--location", type=str, help="CP location (city/address)")
     parser.add_argument("--cp-e-host", type=str, help="CP Engine host")
     parser.add_argument("--cp-e-port", type=int, help="CP Engine port")
     parser.add_argument("--central-host", type=str, help="Central host")
     parser.add_argument("--central-port", type=int, help="Central HTTP port")
     parser.add_argument("--health-interval", type=float, help="Health check interval (seconds)")
     parser.add_argument("--log-level", type=str, help="Log level")
+    # Registry settings
+    parser.add_argument("--registry-url", type=str, help="EV_Registry API URL")
+    parser.add_argument("--registry-enabled", type=bool, default=None, help="Enable Registry authentication")
+    parser.add_argument("--registry-admin-key", type=str, help="Admin API key for new registrations")
+    parser.add_argument("--no-registry", action="store_true", help="Disable Registry authentication (insecure)")
     
     args = parser.parse_args()
     
     # Build config from args (only non-None values), env vars will fill the rest
-    config_dict = {k: v for k, v in vars(args).items() if v is not None and k != 'log_level'}
+    config_dict = {k: v for k, v in vars(args).items() 
+                   if v is not None and k not in ('log_level', 'no_registry')}
+    
+    # Handle --no-registry flag
+    if args.no_registry:
+        config_dict['registry_enabled'] = False
+    
     config = CPMonitorConfig(**config_dict)
     
     # Use log level from args or config
@@ -273,6 +387,11 @@ async def main():
         level=log_level
     )
     logger.configure(extra={"cp_id": config.cp_id})
+    
+    # Log configuration
+    logger.info(f"Registry enabled: {config.registry_enabled}")
+    if config.registry_enabled:
+        logger.info(f"Registry URL: {config.registry_url}")
     
     # Initialize monitor
     monitor = CPMonitor(config)

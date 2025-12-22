@@ -1,12 +1,17 @@
 """
 Dashboard for EV Central - FastAPI web interface.
 Provides real-time view of charging points and telemetry.
+
+Security:
+- CP endpoints support optional JWT authentication
+- When authenticated, tokens are validated against Registry-issued credentials
+- Unauthenticated access allowed for backward compatibility (lab mode)
 """
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from evcharging.common.messages import CPRegistration, WeatherReport
@@ -20,27 +25,106 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
     
     app = FastAPI(title="EV Central Dashboard", version="0.1.0")
     
+    async def verify_cp_token(
+        authorization: Optional[str] = Header(None, alias="Authorization")
+    ) -> Optional[dict]:
+        """
+        Verify JWT token from CP.
+        Returns token claims if valid, None if no token provided.
+        Raises HTTPException if token is invalid.
+        
+        This provides optional authentication - CPs with Registry tokens
+        are validated, while unauthenticated access is allowed for
+        backward compatibility.
+        """
+        if not authorization:
+            return None  # No token - allow for backward compatibility
+        
+        # Extract Bearer token
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authorization header format"
+            )
+        
+        token = authorization[7:]  # Remove "Bearer " prefix
+        
+        # Verify token using security manager
+        try:
+            claims = controller.security_manager.verify_access_token(token)
+            if not claims:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or expired token"
+                )
+            logger.debug(f"Token verified for CP: {claims.get('sub')}")
+            return claims
+        except Exception as e:
+            logger.warning(f"Token verification failed: {e}")
+            raise HTTPException(
+                status_code=401,
+                detail="Token verification failed"
+            )
+    
     @app.get("/health")
     async def health():
         """Health check endpoint."""
         return {"status": "healthy", "service": "ev-central"}
     
     @app.post("/cp/register")
-    async def register_cp(registration: CPRegistration):
-        """Register or update a charging point."""
+    async def register_cp(
+        registration: CPRegistration,
+        token_claims: Optional[dict] = Depends(verify_cp_token)
+    ):
+        """
+        Register or update a charging point.
+        
+        Security: Accepts optional JWT token in Authorization header.
+        If provided, token is validated against Registry-issued credentials.
+        """
+        # If token provided, validate CP ID matches
+        if token_claims:
+            token_cp_id = token_claims.get("sub")
+            if token_cp_id and token_cp_id != registration.cp_id:
+                logger.warning(
+                    f"CP ID mismatch: token={token_cp_id}, request={registration.cp_id}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="CP ID in token does not match registration"
+                )
+            logger.info(f"Authenticated registration from CP {registration.cp_id}")
+        
         success = controller.register_cp(registration)
         return {
             "success": success,
             "cp_id": registration.cp_id,
+            "authenticated": token_claims is not None,
             "message": "Charging point registered successfully" if success else "Registration failed"
         }
     
     @app.post("/cp/fault")
-    async def notify_fault(fault_data: dict):
-        """Receive fault/health notifications from CP monitors."""
+    async def notify_fault(
+        fault_data: dict,
+        token_claims: Optional[dict] = Depends(verify_cp_token)
+    ):
+        """
+        Receive fault/health notifications from CP monitors.
+        
+        Security: Accepts optional JWT token for authenticated notifications.
+        """
         cp_id = fault_data.get("cp_id")
         status = fault_data.get("status")
         reason = fault_data.get("reason", "")
+        
+        # Validate CP ID if authenticated
+        if token_claims:
+            token_cp_id = token_claims.get("sub")
+            if token_cp_id and token_cp_id != cp_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="CP ID in token does not match fault notification"
+                )
         
         logger.info(f"Received fault notification for {cp_id}: {status} - {reason}")
         
@@ -56,14 +140,30 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         return {"success": True, "cp_id": cp_id, "status": status}
 
     @app.post("/cp/heartbeat")
-    async def monitor_heartbeat(payload: dict):
-        """Receive heartbeat ping from CP Monitor."""
+    async def monitor_heartbeat(
+        payload: dict,
+        token_claims: Optional[dict] = Depends(verify_cp_token)
+    ):
+        """
+        Receive heartbeat ping from CP Monitor.
+        
+        Security: Accepts optional JWT token for authenticated heartbeats.
+        """
         cp_id = payload.get("cp_id")
         if not cp_id:
             raise HTTPException(status_code=400, detail="cp_id required")
+        
+        # Validate CP ID if authenticated
+        if token_claims:
+            token_cp_id = token_claims.get("sub")
+            if token_cp_id and token_cp_id != cp_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="CP ID in token does not match heartbeat"
+                )
 
         controller.record_monitor_ping(cp_id)
-        return {"success": True, "cp_id": cp_id}
+        return {"success": True, "cp_id": cp_id, "authenticated": token_claims is not None}
     
     @app.post("/stop-session")
     async def stop_session(payload: dict):
