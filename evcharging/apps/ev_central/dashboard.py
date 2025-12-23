@@ -9,6 +9,8 @@ Security:
 """
 
 import os
+from urllib.parse import quote
+
 import aiohttp
 from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -251,13 +253,24 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
             weather_url = os.getenv('WEATHER_SERVICE_URL', 'http://ev-weather:8003')
             async with aiohttp.ClientSession() as session:
                 try:
-                    async with session.get(f'{weather_url}/weather', timeout=aiohttp.ClientTimeout(total=2)) as response:
+                    timeout = aiohttp.ClientTimeout(total=2)
+                    async with session.get(f'{weather_url}/weather', timeout=timeout) as response:
                         if response.status == 200:
                             data = await response.json()
+                            locations = set(data.get("locations", []))
                             # Filter only cities we care about
                             for city in cities:
                                 if city in data.get('weather', {}):
                                     weather_data[city] = data['weather'][city]
+                            missing_cities = [city for city in cities if city not in locations]
+                            for city in missing_cities:
+                                try:
+                                    await session.post(
+                                        f"{weather_url}/api/locations/{quote(city)}",
+                                        timeout=timeout
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Could not register weather location '{city}': {e}")
                 except Exception as e:
                     logger.debug(f"Could not fetch weather data: {e}")
             
@@ -684,18 +697,27 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
 
                 // Fetch weather data
                 let weatherCache = {{}};
+                let lastWeatherFetch = 0;
+                const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
+                
                 async function updateWeather() {{
                     try {{
                         const response = await fetch('/weather');
                         const data = await response.json();
                         weatherCache = data.weather || {{}};
+                        console.log('Weather updated:', Object.keys(weatherCache).length, 'cities');
                     }} catch (error) {{
                         console.debug('Weather service not available:', error);
-                        weatherCache = {{}};
                     }}
                 }}
 
                 async function updateDashboard() {{
+                    // Fetch weather if enough time has passed
+                    const now = Date.now();
+                    if (now - lastWeatherFetch > WEATHER_FETCH_INTERVAL) {{
+                        lastWeatherFetch = now;
+                        updateWeather(); // Don't await, let it run in background
+                    }}
                     try {{
                         const response = await fetch('/cp');
                         const data = await response.json();
@@ -745,24 +767,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
 
                             // Add weather data from cache
                             let weatherHtml = '';
-                            if (cp.city && weatherCache[cp.city]) {{
-                                const w = weatherCache[cp.city];
-                                const tempAlert = w.temperature > 35 || w.temperature < 0;
-                                const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
-                                weatherHtml = `
-                                    <div class="weather ${{cssClass}}">
-                                        🌡️ ${{cp.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description}}
-                                    </div>
-                                `;
-                            }} else if (cp.city) {{
-                                weatherHtml = `
-                                    <div class="weather">
-                                        📍 ${{cp.city}} - Weather data loading...
-                                    </div>
-                                `;
-                            }}
-                            
-                            if (cp.weather) {{
+                            // First check if cp.weather is provided (from CP directly)
+                            if (cp.weather && typeof cp.weather.temperature === 'number') {{
                                 weatherHtml = `
                                     <div class="weather ${{cp.weather.alert ? 'weather-alert' : 'weather-ok'}}">
                                         City: ${{cp.city}}<br>
@@ -770,6 +776,19 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                         Status: ${{cp.weather.alert ? 'ALERT' : 'OK'}}
                                     </div>
                                 `;
+                            }} else if (cp.city && weatherCache[cp.city] && typeof weatherCache[cp.city].temperature === 'number') {{
+                                // Then check weather cache
+                                const w = weatherCache[cp.city];
+                                const tempAlert = w.temperature > 35 || w.temperature < 0;
+                                const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
+                                weatherHtml = `
+                                    <div class="weather ${{cssClass}}">
+                                        🌡️ ${{cp.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description || 'N/A'}}
+                                    </div>
+                                `;
+                            }} else if (cp.city) {{
+                                // Just show city name without "loading" message
+                                weatherHtml = `<div class="weather">📍 ${{cp.city}}</div>`;
                             }}
 
                             const statusHtml = `
@@ -924,14 +943,15 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     updateDashboard();
                 }}
                 
-                // Initial load
-                updateWeather(); // Load weather first
-                updateDashboard();
-                
-                // Auto-refresh every 1 second for real-time updates
-                setInterval(updateDashboard, 1000);
-                // Update weather every 30 seconds
-                setInterval(updateWeather, 30000);
+                // Initial load - fetch weather first, then start dashboard updates
+                (async function() {{
+                    await updateWeather(); // Load weather data first
+                    lastWeatherFetch = Date.now(); // Reset timer after initial fetch
+                    await updateDashboard(); // Then render with weather data
+                    
+                    // Auto-refresh every 1 second for real-time updates
+                    setInterval(updateDashboard, 1000);
+                }})();
             </script>
         </head>
         <body>

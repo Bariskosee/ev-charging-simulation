@@ -894,6 +894,8 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 let favorites = new Set();
                 let activeSession = null;
                 let weatherCache = {{}};
+                let lastWeatherFetch = 0;
+                const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
                 
                 function showNotification(message, type = 'info') {{
                     const container = document.getElementById('notifications');
@@ -918,11 +920,16 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                         console.log('Weather data loaded:', Object.keys(weatherCache).length, 'cities');
                     }} catch (error) {{
                         console.debug('Weather service not available:', error);
-                        weatherCache = {{}};
                     }}
                 }}
                 
                 async function loadChargingPoints() {{
+                    // Fetch weather if enough time has passed
+                    const now = Date.now();
+                    if (now - lastWeatherFetch > WEATHER_FETCH_INTERVAL) {{
+                        lastWeatherFetch = now;
+                        updateWeather(); // Don't await, let it run in background
+                    }}
                     try {{
                         const response = await fetch('/charging-points');
                         if (!response.ok) {{
@@ -1007,16 +1014,17 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                             <span class="status-badge status-${{cp.status}}">${{cp.status}}</span>
                             
                             ${{(() => {{
-                                if (cp.location.city && weatherCache[cp.location.city]) {{
+                                if (cp.location.city && weatherCache[cp.location.city] && typeof weatherCache[cp.location.city].temperature === 'number') {{
                                     const w = weatherCache[cp.location.city];
                                     const tempAlert = w.temperature > 35 || w.temperature < 0;
                                     const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
-                                    return `<div class="weather ${{cssClass}}">🌡️ ${{cp.location.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description}}</div>`;
+                                    return `<div class="weather ${{cssClass}}">🌡️ ${{cp.location.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description || 'N/A'}}</div>`;
                                 }} else if (cp.location.city) {{
-                                    return `<div class="weather">📍 ${{cp.location.city}} - Weather data loading...</div>`;
+                                    // Just show city name without "loading" message
+                                    return `<div class="weather">📍 ${{cp.location.city}}</div>`;
                                 }}
                                 return '';
-                            }})()}}
+                            }})()
                             
                             <div class="cp-details">
                                 <div class="cp-detail-row">
@@ -1310,27 +1318,27 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                     }}
                 }}
                 
-                // Initialize
-                updateWeather(); // Load weather first
-                loadChargingPoints();
-                loadActiveSession();
-                loadFavorites();
-                updateSyncStatus();
-                loadErrors();
-                
-                // Auto-refresh every 2 seconds
-                setInterval(() => {{
-                    loadChargingPoints();
+                // Initialize - await weather first, then render dashboard
+                (async function() {{
+                    await updateWeather(); // Load weather data first
+                    lastWeatherFetch = Date.now(); // Reset timer after initial fetch
+                    loadChargingPoints(); // Then render with weather data
                     loadActiveSession();
+                    loadFavorites();
                     updateSyncStatus();
                     loadErrors();
-                }}, 2000);
-                
-                // Refresh favorites every 10 seconds
-                setInterval(loadFavorites, 10000);
-                
-                // Update weather every 30 seconds
-                setInterval(updateWeather, 30000);
+                    
+                    // Auto-refresh every 2 seconds
+                    setInterval(() => {{
+                        loadChargingPoints();
+                        loadActiveSession();
+                        updateSyncStatus();
+                        loadErrors();
+                    }}, 2000);
+                    
+                    // Refresh favorites every 10 seconds
+                    setInterval(loadFavorites, 10000);
+                }})();
                 
                 // Load and display system errors
                 async function loadErrors() {{
