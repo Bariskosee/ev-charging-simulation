@@ -8,6 +8,7 @@ Security:
 - Unauthenticated access allowed for backward compatibility (lab mode)
 """
 
+import os
 import aiohttp
 from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -247,9 +248,10 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
             
             # Fetch weather data from weather service
             weather_data = {}
+            weather_url = os.getenv('WEATHER_SERVICE_URL', 'http://ev-weather:8003')
             async with aiohttp.ClientSession() as session:
                 try:
-                    async with session.get('http://localhost:8003/weather', timeout=aiohttp.ClientTimeout(total=2)) as response:
+                    async with session.get(f'{weather_url}/weather', timeout=aiohttp.ClientTimeout(total=2)) as response:
                         if response.status == 200:
                             data = await response.json()
                             # Filter only cities we care about
@@ -763,7 +765,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                             if (cp.weather) {{
                                 weatherHtml = `
                                     <div class="weather ${{cp.weather.alert ? 'weather-alert' : 'weather-ok'}}">
-                                        City: ${cp.city}<br>
+                                        City: ${{cp.city}}<br>
                                         ${{cp.weather.temperature.toFixed(1)}} °C<br>
                                         Status: ${{cp.weather.alert ? 'ALERT' : 'OK'}}
                                     </div>
@@ -950,7 +952,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         <div class="stat-label">Currently Charging</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="error-count">{data.get('error_summary', {{}}).get('total_active', 0)}</div>
+                        <div class="stat-value" id="error-count">{data.get('error_summary', {}).get('total_active', 0)}</div>
                         <div class="stat-label">Active Errors</div>
                     </div>
                 </div>

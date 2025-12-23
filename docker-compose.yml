@@ -79,6 +79,7 @@ services:
       CENTRAL_HTTP_PORT: 8000
       CENTRAL_LISTEN_PORT: 9999
       CENTRAL_LOG_LEVEL: INFO
+      EV_SECURITY_SECRET: ${EV_SECURITY_SECRET}
       EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
       # Enable Kafka message encryption (set to "true" in production)
       EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
@@ -88,6 +89,12 @@ services:
     networks:
       - evcharging-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     logging:
       driver: "json-file"
       options:
@@ -149,10 +156,12 @@ services:
       context: .
       dockerfile: docker/Dockerfile.weather
     container_name: ev-weather
+    ports:
+      - "8003:8003"  # Weather API endpoint
     environment:
-      WEATHER_OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
       WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
-      WEATHER_POLL_INTERVAL: ${POLL_INTERVAL:-4}
+      WEATHER_POLL_INTERVAL: ${WEATHER_POLLING_INTERVAL:-4}
       WEATHER_CITY_FILE: ${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
       WEATHER_LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:

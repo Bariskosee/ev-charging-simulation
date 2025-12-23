@@ -228,6 +228,21 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
         """Get system errors for dashboard display."""
         return driver.get_errors()
 
+    @app.get("/weather")
+    async def get_weather():
+        """Get weather data from central service for all CP locations."""
+        import os
+        import aiohttp
+        try:
+            central_url = os.getenv('DRIVER_CENTRAL_HTTP_URL', 'http://ev-central:8000')
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{central_url}/weather', timeout=aiohttp.ClientTimeout(total=3)) as response:
+                    if response.status == 200:
+                        return await response.json()
+            return {"cities": [], "weather": {}}
+        except Exception as e:
+            return {"cities": [], "weather": {}}
+
     # ------------------------------------------------------------------
     # HTML Dashboard
     # ------------------------------------------------------------------
@@ -761,6 +776,23 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 .error-badge.error {{ background: #f44336; color: white; }}
                 .error-badge.warning {{ background: #ff9800; color: white; }}
                 .error-badge.info {{ background: #2196f3; color: white; }}
+                
+                /* Weather styles */
+                .weather {{
+                    margin-top: 10px;
+                    padding: 8px;
+                    border-radius: 6px;
+                    font-size: 0.9em;
+                }}
+                .weather-ok {{
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                }}
+                .weather-alert {{
+                    background: #ffebee;
+                    color: #c62828;
+                    font-weight: bold;
+                }}
             </style>
         </head>
         <body>
@@ -861,6 +893,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 let chargingPoints = [];
                 let favorites = new Set();
                 let activeSession = null;
+                let weatherCache = {{}};
                 
                 function showNotification(message, type = 'info') {{
                     const container = document.getElementById('notifications');
@@ -875,6 +908,18 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                     setTimeout(() => {{
                         notification.remove();
                     }}, 5000);
+                }}
+                
+                async function updateWeather() {{
+                    try {{
+                        const response = await fetch('/weather');
+                        const data = await response.json();
+                        weatherCache = data.weather || {{}};
+                        console.log('Weather data loaded:', Object.keys(weatherCache).length, 'cities');
+                    }} catch (error) {{
+                        console.debug('Weather service not available:', error);
+                        weatherCache = {{}};
+                    }}
                 }}
                 
                 async function loadChargingPoints() {{
@@ -959,8 +1004,19 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                                 >★</button>
                             </div>
                             
-                            <div class="cp-location">📍 ${{cp.location.address}}, ${{cp.location.city}}</div>
                             <span class="status-badge status-${{cp.status}}">${{cp.status}}</span>
+                            
+                            ${{(() => {{
+                                if (cp.location.city && weatherCache[cp.location.city]) {{
+                                    const w = weatherCache[cp.location.city];
+                                    const tempAlert = w.temperature > 35 || w.temperature < 0;
+                                    const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
+                                    return `<div class="weather ${{cssClass}}">🌡️ ${{cp.location.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description}}</div>`;
+                                }} else if (cp.location.city) {{
+                                    return `<div class="weather">📍 ${{cp.location.city}} - Weather data loading...</div>`;
+                                }}
+                                return '';
+                            }})()}}
                             
                             <div class="cp-details">
                                 <div class="cp-detail-row">
@@ -1239,7 +1295,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                             // Connected but data is stale
                             syncStatusEl.className = 'sync-status stale';
                             syncDotEl.className = 'sync-dot stale';
-                            syncTextEl.textContent = `Data ${Math.round(status.age_seconds)}s old`;
+                            syncTextEl.textContent = `Data ${{Math.round(status.age_seconds)}}s old`;
                             staleWarningEl.classList.remove('visible');
                         }} else {{
                             // Disconnected
@@ -1255,6 +1311,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 }}
                 
                 // Initialize
+                updateWeather(); // Load weather first
                 loadChargingPoints();
                 loadActiveSession();
                 loadFavorites();
@@ -1271,6 +1328,9 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 
                 // Refresh favorites every 10 seconds
                 setInterval(loadFavorites, 10000);
+                
+                // Update weather every 30 seconds
+                setInterval(updateWeather, 30000);
                 
                 // Load and display system errors
                 async function loadErrors() {{

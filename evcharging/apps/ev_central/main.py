@@ -904,7 +904,7 @@ class EVCentralController:
             driver_id=driver_id,
             cp_id=cp_id,
             status=MessageStatus.COMPLETED,
-            reason=f"Session completed: {ticket.energy_kwh:.2f} kWh, €{ticket.cost_eur:.2f}",
+            reason=f"Session completed: {ticket.energy_kwh:.2f} kWh, €{ticket.total_cost_eur:.2f}",
             session_id=session_id
         )
         await self.producer.send(TOPICS["DRIVER_UPDATES"], update, key=driver_id)
