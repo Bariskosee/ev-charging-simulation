@@ -250,3 +250,44 @@ class RegistryClient:
                 return response.status_code == 200
         except Exception:
             return False
+    
+    async def list_registered_cps(self, status_filter: str = "REGISTERED") -> list[dict]:
+        """
+        List all registered charging points from registry.
+        
+        Args:
+            status_filter: Filter by status ('REGISTERED' or 'DEREGISTERED')
+            
+        Returns:
+            List of CP info dicts with cp_id, location, status, etc.
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                verify=self.verify_ssl
+            ) as client:
+                response = await client.get(
+                    f"{self.registry_url}/cp",
+                    params={"status_filter": status_filter, "limit": 1000}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    cps = data.get("cps", [])
+                    logger.info(f"Retrieved {len(cps)} charging points from registry")
+                    return cps
+                else:
+                    logger.error(
+                        f"Failed to list CPs: {response.status_code} - {response.text}"
+                    )
+                    return []
+        
+        except httpx.ConnectError as e:
+            logger.warning(f"Cannot connect to EV_Registry at {self.registry_url}: {e}")
+            return []
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout connecting to EV_Registry at {self.registry_url}")
+            return []
+        except Exception as e:
+            logger.error(f"Error listing CPs from EV_Registry: {e}")
+            return []

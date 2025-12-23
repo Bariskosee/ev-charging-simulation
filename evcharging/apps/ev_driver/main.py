@@ -407,8 +407,38 @@ class EVDriver:
             for item in central_points:
                 cp_id = item["cp_id"]
                 meta = get_metadata(cp_id)
+                
+                # If metadata not available, create basic info from Central data
                 if not meta:
+                    # Use city from Central's data
+                    city = item.get("city", "Unknown")
+                    status = self._map_engine_status(item)
+                    telemetry = item.get("telemetry") or {}
+                    
+                    detail = ChargingPointDetail(
+                        cp_id=cp_id,
+                        name=f"CP {cp_id}",  # Generic name
+                        status=status,
+                        power_kw=22.0,  # Default power
+                        connector_type="Type 2",  # Default connector
+                        location=Location(
+                            address=city,
+                            city=city,
+                            latitude=0.0,
+                            longitude=0.0,
+                            distance_km=None,
+                        ),
+                        queue_length=1 if status == "OCCUPIED" else 0,
+                        estimated_wait_minutes=15 if status == "OCCUPIED" else 0,
+                        favorite=cp_id in self.favorites,
+                        amenities=[],
+                        price_eur_per_kwh=0.30,
+                        last_updated=utc_now(),
+                    )
+                    self.charging_points[cp_id] = detail
                     continue
+                
+                # Use metadata if available
                 status = self._map_engine_status(item)
                 telemetry = item.get("telemetry") or {}
                 detail = ChargingPointDetail(

@@ -31,6 +31,7 @@ from evcharging.common.circuit_breaker import CircuitBreaker, CircuitState
 from evcharging.common.database import FaultHistoryDB, CPSecurityDB, CPRegistryDB
 from evcharging.common.security import create_security_manager
 from evcharging.common.cp_security import CPSecurityService, CPSecurityStatus
+from evcharging.common.registry_client import RegistryClient
 from evcharging.common.encrypted_kafka import (
     EncryptedKafkaHandler, 
     create_encrypted_kafka_handler,
@@ -72,7 +73,9 @@ class ChargingPoint:
             recovery_timeout=30,
             half_open_max_calls=2
         )
-        self.city: str = get_metadata(cp_id).city
+        # Get city from metadata if available, otherwise set to Unknown
+        metadata = get_metadata(cp_id)
+        self.city: str = metadata.city if metadata else "Unknown"
         self.monitor_status: ChargingPoint.MonitorStatus = ChargingPoint.MonitorStatus.DOWN
         self.monitor_last_seen: datetime | None = None
         self.engine_status_known: bool = False
@@ -224,6 +227,13 @@ class EVCentralController:
         # Initialize error manager for centralized error tracking
         self.error_manager = get_error_manager()
         
+        # Initialize registry client for loading registered CPs
+        registry_url = os.environ.get("REGISTRY_SERVICE_URL", "http://ev-registry:8080")
+        self.registry_client = RegistryClient(
+            registry_url=registry_url,
+            verify_ssl=False  # Disable SSL verification for lab environment
+        )
+        
         logger.info(
             f"EV Central Controller initialized with security extensions "
             f"(Kafka encryption: {'enabled' if encryption_enabled else 'disabled'})"
@@ -261,9 +271,73 @@ class EVCentralController:
         else:
             logger.info(f"[{event_type}] {component}: {message}")
     
+    async def _load_cps_from_registry(self):
+        """Load all registered charging points from EV Registry."""
+        try:
+            logger.info("Loading registered charging points from EV Registry...")
+            cps = await self.registry_client.list_registered_cps(status_filter="REGISTERED")
+            
+            if not cps:
+                logger.info("No registered CPs found in registry")
+                return
+            
+            loaded_count = 0
+            for cp_info in cps:
+                cp_id = cp_info.get("cp_id")
+                if not cp_id:
+                    continue
+                
+                # Create ChargingPoint instance if not already exists
+                if cp_id not in self.charging_points:
+                    self.charging_points[cp_id] = ChargingPoint(cp_id)
+                    logger.info(f"Loaded CP {cp_id} from registry (Location: {cp_info.get('location', 'Unknown')})")
+                    loaded_count += 1
+                
+                # Set initial state
+                cp = self.charging_points[cp_id]
+                cp.state = CPState.DISCONNECTED  # Will update when monitor connects
+                cp.last_update = utc_now()
+                
+                # Try to get city from metadata
+                metadata = get_metadata(cp_id)
+                if metadata:
+                    cp.city = metadata.city
+                    self.weather_by_city.update({metadata.city: None})
+                else:
+                    # Use location from registry if metadata not available
+                    location = cp_info.get('location', 'Unknown')
+                    cp.city = location
+                    logger.debug(f"No metadata for {cp_id}, using registry location: {location}")
+                
+                # Mark as registered (authenticated status will be updated when CP connects)
+                cp.is_authenticated = False
+                cp.security_status = CPSecurityStatus.PENDING
+            
+            logger.info(f"Loaded {loaded_count} charging points from EV Registry")
+            
+            if loaded_count > 0:
+                self._add_system_event(
+                    "INITIALIZATION",
+                    "Registry",
+                    f"Loaded {loaded_count} registered charging points from EV Registry",
+                    "SUCCESS"
+                )
+        
+        except Exception as e:
+            logger.warning(f"Failed to load CPs from registry: {e}")
+            self._add_system_event(
+                "INITIALIZATION",
+                "Registry",
+                f"Failed to load CPs from registry: {e}",
+                "WARNING"
+            )
+    
     async def start(self):
         """Initialize and start the central controller."""
         logger.info("Starting EV Central Controller...")
+        
+        # Load registered CPs from Registry
+        await self._load_cps_from_registry()
         
         # Ensure Kafka topics exist
         await ensure_topics(

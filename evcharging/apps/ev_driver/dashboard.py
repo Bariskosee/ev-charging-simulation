@@ -931,19 +931,26 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                         updateWeather(); // Don't await, let it run in background
                     }}
                     try {{
+                        console.log('[DEBUG] Fetching charging points...');
                         const response = await fetch('/charging-points');
+                        console.log('[DEBUG] Response status:', response.status);
                         if (!response.ok) {{
                             throw new Error(`HTTP error! status: ${{response.status}}`);
                         }}
                         const data = await response.json();
-                        console.log('Loaded charging points:', data);
+                        console.log('[DEBUG] Loaded charging points:', data.length, 'items');
+                        console.log('[DEBUG] First CP:', data[0]);
                         if (!Array.isArray(data)) {{
+                            console.error('[DEBUG] Data is not an array!', typeof data);
                             throw new Error('Expected array of charging points');
                         }}
                         chargingPoints = data;
+                        console.log('[DEBUG] Calling renderChargingPoints...');
                         renderChargingPoints();
+                        console.log('[DEBUG] renderChargingPoints completed');
                     }} catch (error) {{
-                        console.error('Error loading charging points:', error);
+                        console.error('[ERROR] Error loading charging points:', error);
+                        console.error('[ERROR] Stack:', error.stack);
                         showNotification('Failed to load charging points', 'error');
                     }}
                 }}
@@ -975,12 +982,17 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 }}
                 
                 function renderChargingPoints() {{
+                    console.log('[DEBUG] renderChargingPoints called, chargingPoints.length:', chargingPoints.length);
                     const grid = document.getElementById('cp-grid');
                     const count = document.getElementById('cp-count');
+                    
+                    console.log('[DEBUG] grid element:', grid);
+                    console.log('[DEBUG] count element:', count);
                     
                     count.textContent = chargingPoints.length;
                     
                     if (chargingPoints.length === 0) {{
+                        console.log('[DEBUG] No charging points, showing empty state');
                         grid.innerHTML = `
                             <div class="empty-state" style="grid-column: 1 / -1;">
                                 <div class="empty-state-icon">🔍</div>
@@ -990,7 +1002,16 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                         return;
                     }}
                     
-                    grid.innerHTML = chargingPoints.map(cp => renderCpCard(cp)).join('');
+                    console.log('[DEBUG] Rendering', chargingPoints.length, 'charging points...');
+                    try {{
+                        const cards = chargingPoints.map(cp => renderCpCard(cp));
+                        console.log('[DEBUG] Generated', cards.length, 'cards');
+                        grid.innerHTML = cards.join('');
+                        console.log('[DEBUG] Cards rendered to grid');
+                    }} catch (error) {{
+                        console.error('[ERROR] Error rendering cards:', error);
+                        console.error('[ERROR] Stack:', error.stack);
+                    }}
                 }}
                 
                 function renderCpCard(cp) {{
@@ -1024,7 +1045,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                                     return `<div class="weather">📍 ${{cp.location.city}}</div>`;
                                 }}
                                 return '';
-                            }})()
+                            }})()}}
                             
                             <div class="cp-details">
                                 <div class="cp-detail-row">
@@ -1320,13 +1341,29 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 
                 // Initialize - await weather first, then render dashboard
                 (async function() {{
-                    await updateWeather(); // Load weather data first
-                    lastWeatherFetch = Date.now(); // Reset timer after initial fetch
-                    loadChargingPoints(); // Then render with weather data
+                    console.log('[INIT] Starting dashboard initialization...');
+                    try {{
+                        console.log('[INIT] Loading weather data...');
+                        await updateWeather(); // Load weather data first
+                        lastWeatherFetch = Date.now(); // Reset timer after initial fetch
+                        console.log('[INIT] Weather loaded, now loading charging points...');
+                    }} catch (weatherError) {{
+                        console.error('[INIT] Weather failed, continuing anyway:', weatherError);
+                    }}
+                    
+                    try {{
+                        console.log('[INIT] Calling loadChargingPoints...');
+                        await loadChargingPoints(); // Then render with weather data
+                        console.log('[INIT] loadChargingPoints completed');
+                    }} catch (cpError) {{
+                        console.error('[INIT] loadChargingPoints failed:', cpError);
+                    }}
+                    
                     loadActiveSession();
                     loadFavorites();
                     updateSyncStatus();
                     loadErrors();
+                    console.log('[INIT] Initial load complete, starting intervals...');
                     
                     // Auto-refresh every 2 seconds
                     setInterval(() => {{
