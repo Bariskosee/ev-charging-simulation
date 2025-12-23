@@ -107,10 +107,11 @@ class WeatherService:
                 for result in results:
                     if isinstance(result, WeatherData):
                         self.latest_data[result.city] = result
-                        logger.info(f"🌡️  {result}")
+                        # Use debug level for routine weather updates to avoid flooding menu
+                        logger.debug(f"🌡️  {result}")
                     elif isinstance(result, Exception):
                         poll_failures += 1
-                        logger.error(f"Weather fetch error: {result}")
+                        logger.debug(f"Weather fetch error: {result}")
                 
                 # Track consecutive failures for overall service health
                 if poll_failures == len(results) and len(results) > 0:

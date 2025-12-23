@@ -133,12 +133,17 @@ class EVWeatherController:
 
 async def main():
     """Main entry point."""
-    # Configure logger
+    # Configure logger - only show important startup/shutdown messages
+    # Routine weather updates are suppressed to keep menu clean
     logger.remove()
     logger.add(
         sys.stderr,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>EV_W</cyan> | <level>{message}</level>",
-        level="INFO"
+        level="INFO",
+        filter=lambda record: any(keyword in record["message"] for keyword in [
+            "✅", "🌐", "initialized", "shutdown", "Loaded", "Started", "stopped",
+            "Configuration", "Initializing", "Shutting"
+        ]) or record["level"].name in ["WARNING", "ERROR", "CRITICAL"]
     )
     
     # Create and run controller
