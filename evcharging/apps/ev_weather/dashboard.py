@@ -272,4 +272,70 @@ def create_weather_dashboard(controller: "EVWeatherController") -> FastAPI:
                 content={"error": str(e)}
             )
     
+    @app.get("/api/locations")
+    async def list_locations():
+        """Get list of currently monitored locations."""
+        try:
+            locations = controller.location_manager.get_locations()
+            return {
+                "locations": locations,
+                "count": len(locations)
+            }
+        except Exception as e:
+            logger.error(f"Error listing locations: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e)}
+            )
+    
+    @app.post("/api/locations/{city}")
+    async def add_location(city: str):
+        """Add a new location to monitor (allows runtime changes without interactive menu)."""
+        try:
+            if controller.location_manager.add_location(city):
+                return {
+                    "success": True,
+                    "message": f"Location '{city}' added successfully",
+                    "locations": controller.location_manager.get_locations()
+                }
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "message": f"Location '{city}' already exists or is invalid"
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error adding location: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e)}
+            )
+    
+    @app.delete("/api/locations/{city}")
+    async def remove_location(city: str):
+        """Remove a location from monitoring (allows runtime changes without interactive menu)."""
+        try:
+            if controller.location_manager.remove_location(city):
+                return {
+                    "success": True,
+                    "message": f"Location '{city}' removed successfully",
+                    "locations": controller.location_manager.get_locations()
+                }
+            else:
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "success": False,
+                        "message": f"Location '{city}' not found"
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error removing location: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e)}
+            )
+    
     return app

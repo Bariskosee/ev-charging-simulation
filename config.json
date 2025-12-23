@@ -1,6 +1,6 @@
 {
   "weather": {
-    "api_key": "your_openweather_api_key_here",
+    "api_key": "43479d2df9e42a29d1bf454777ff44f6",
     "polling_interval": 4,
     "temperature_unit": "metric",
     "locations_file": "locations.txt",
@@ -10,7 +10,9 @@
     "default_cities": [
       "Istanbul",
       "Ankara",
-      "Izmir"
+      "Izmir",
+      "Antalya",
+      "Trabzon"
     ]
   }
 }

@@ -64,25 +64,26 @@ class EVWeatherController:
     async def run(self):
         """Run the weather monitoring service."""
         # Load default locations if available
-        self.location_manager.load_from_file("locations.txt")
+        self.location_manager.load_from_file(self.config.locations_file)
         
-        # If no locations loaded, add some defaults
+        # If no locations loaded, add configured defaults
         if not self.location_manager.has_locations():
-            logger.info("No locations configured, adding defaults...")
-            self.location_manager.add_location("Istanbul")
-            self.location_manager.add_location("Ankara")
-            self.location_manager.add_location("Izmir")
+            if self.config.default_cities:
+                logger.info(f"No locations configured, loading {len(self.config.default_cities)} defaults from config...")
+                for city in self.config.default_cities:
+                    self.location_manager.add_location(city)
+            else:
+                logger.warning("No locations configured and no defaults in config.json")
         
         # Start menu in separate thread
         self.menu.start()
         
         # Start dashboard server
-        dashboard_port = 8003  # Use port 8003 for weather dashboard
-        logger.info(f"🌐 Starting weather dashboard on http://localhost:{dashboard_port}")
+        logger.info(f"🌐 Starting weather dashboard on http://localhost:{self.config.dashboard_port}")
         config = uvicorn.Config(
             self.dashboard_app,
             host="0.0.0.0",
-            port=dashboard_port,
+            port=self.config.dashboard_port,
             log_level="warning"
         )
         self.dashboard_server = uvicorn.Server(config)

@@ -20,6 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY evcharging /app/evcharging
 
+# Copy configuration file (optional - can use env vars instead)
+COPY --chown=root:root config.json* /app/
+
 # Set Python path
 ENV PYTHONPATH=/app
 ENV SERVICE_TYPE=weather

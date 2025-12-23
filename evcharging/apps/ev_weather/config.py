@@ -6,7 +6,7 @@ Handles loading API keys and settings from external sources.
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from loguru import logger
 
 
@@ -25,32 +25,45 @@ class WeatherConfig:
         self.base_url: str = "https://api.openweathermap.org/data/2.5/weather"
         self.polling_interval: int = 4  # seconds
         self.temperature_unit: str = "metric"  # celsius
+        self.default_cities: List[str] = []  # Cities to monitor by default
+        self.locations_file: str = "locations.txt"  # File to store/load locations
+        self.dashboard_port: int = 8003  # HTTP dashboard port
         
     def load(self) -> bool:
         """
         Load configuration from external sources.
         Tries multiple sources in order: .env file, environment variables, config.json
+        Also loads supplementary config (default_cities, locations_file, dashboard_port) from config.json if available.
         
         Returns:
             bool: True if configuration loaded successfully
         """
+        api_key_loaded = False
+        
         # Try loading from .env file
         if self._load_from_env_file():
             logger.info("Configuration loaded from .env file")
-            return True
+            api_key_loaded = True
         
         # Try loading from environment variables
-        if self._load_from_environment():
+        elif self._load_from_environment():
             logger.info("Configuration loaded from environment variables")
-            return True
+            api_key_loaded = True
         
         # Try loading from config.json
-        if self._load_from_json():
+        elif self._load_from_json():
             logger.info("Configuration loaded from config.json")
-            return True
+            api_key_loaded = True
         
-        logger.error("Failed to load configuration from any source")
-        return False
+        # Even if API key was loaded from env, try to load supplementary config from JSON
+        if api_key_loaded:
+            self._load_supplementary_from_json()
+        
+        if not api_key_loaded:
+            logger.error("Failed to load configuration from any source")
+            return False
+        
+        return True
     
     def _load_from_env_file(self) -> bool:
         """Load configuration from .env file."""
@@ -105,11 +118,42 @@ class WeatherConfig:
             self.api_key = weather_config.get('api_key')
             self.polling_interval = weather_config.get('polling_interval', 4)
             self.temperature_unit = weather_config.get('temperature_unit', 'metric')
+            self.locations_file = weather_config.get('locations_file', 'locations.txt')
+            self.dashboard_port = weather_config.get('dashboard_port', 8003)
+            
+            # Read default cities from locations section
+            locations_config = data.get('locations', {})
+            self.default_cities = locations_config.get('default_cities', [])
             
             return self.api_key is not None
         except Exception as e:
             logger.error(f"Error reading config.json: {e}")
             return False
+    
+    def _load_supplementary_from_json(self) -> None:
+        """Load supplementary configuration (default_cities, etc.) from config.json even if API key came from env."""
+        config_file = Path(self.config_file or "config.json")
+        if not config_file.exists():
+            return
+        
+        try:
+            with open(config_file, 'r') as f:
+                data = json.load(f)
+                
+            # Load weather-specific settings if not already set from env
+            weather_config = data.get('weather', {})
+            if 'locations_file' in weather_config:
+                self.locations_file = weather_config.get('locations_file', 'locations.txt')
+            if 'dashboard_port' in weather_config:
+                self.dashboard_port = weather_config.get('dashboard_port', 8003)
+            
+            # Always load default cities from JSON if available
+            locations_config = data.get('locations', {})
+            if 'default_cities' in locations_config:
+                self.default_cities = locations_config.get('default_cities', [])
+                logger.info(f"Loaded {len(self.default_cities)} default cities from config.json")
+        except Exception as e:
+            logger.warning(f"Could not load supplementary config from config.json: {e}")
     
     def validate(self) -> bool:
         """
@@ -143,5 +187,8 @@ class WeatherConfig:
             'api_key': self.api_key,
             'base_url': self.base_url,
             'polling_interval': self.polling_interval,
-            'temperature_unit': self.temperature_unit
+            'temperature_unit': self.temperature_unit,
+            'default_cities': self.default_cities,
+            'locations_file': self.locations_file,
+            'dashboard_port': self.dashboard_port
         }
