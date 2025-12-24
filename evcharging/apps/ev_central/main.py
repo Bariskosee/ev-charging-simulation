@@ -355,7 +355,7 @@ class EVCentralController:
             topics=[TOPICS["DRIVER_REQUESTS"], TOPICS["CP_STATUS"], 
                     TOPICS["CP_TELEMETRY"], TOPICS["CP_SESSION_END"]],
             group_id="central-controller",
-            auto_offset_reset="latest"
+            auto_offset_reset="earliest"
         )
         await self.consumer.start()
         

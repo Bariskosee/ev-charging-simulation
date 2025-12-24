@@ -30,6 +30,7 @@ from evcharging.common.utils import utc_now
 
 class CPSecurityStatus(str, Enum):
     """CP security registration status."""
+    PENDING = "PENDING"
     ACTIVE = "ACTIVE"
     OUT_OF_SERVICE = "OUT_OF_SERVICE"
     REVOKED = "REVOKED"
