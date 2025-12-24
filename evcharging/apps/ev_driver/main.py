@@ -404,6 +404,15 @@ class EVDriver:
 
     async def _update_charging_points(self, central_points: List[dict]):
         async with self._state_lock:
+            # Get set of current CP IDs from Central
+            central_cp_ids = {item["cp_id"] for item in central_points}
+            
+            # Remove CPs that are no longer in Central
+            removed_cps = [cp_id for cp_id in self.charging_points if cp_id not in central_cp_ids]
+            for cp_id in removed_cps:
+                del self.charging_points[cp_id]
+                logger.info(f"Removed CP {cp_id} from local cache (no longer in Central)")
+            
             for item in central_points:
                 cp_id = item["cp_id"]
                 meta = get_metadata(cp_id)

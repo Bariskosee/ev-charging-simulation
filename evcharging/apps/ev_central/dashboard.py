@@ -108,6 +108,21 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
             "message": "Charging point registered successfully" if success else "Registration failed"
         }
     
+    @app.delete("/cp/{cp_id}")
+    async def delete_cp(cp_id: str):
+        """
+        Remove a charging point from Central's tracking.
+        
+        This removes the CP from in-memory state.
+        Does not affect Registry - use Registry API for permanent deregistration.
+        """
+        if cp_id in controller.charging_points:
+            del controller.charging_points[cp_id]
+            logger.info(f"Removed CP {cp_id} from Central")
+            return {"success": True, "message": f"CP {cp_id} removed from Central"}
+        else:
+            raise HTTPException(status_code=404, detail=f"CP {cp_id} not found")
+    
     @app.post("/cp/fault")
     async def notify_fault(
         fault_data: dict,
