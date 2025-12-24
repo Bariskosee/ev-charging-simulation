@@ -43,3 +43,4 @@ pytest-cov==4.1.0
 # Type Checking (optional)
 mypy==1.7.1
 types-requests==2.31.0.10
+python-dotenv

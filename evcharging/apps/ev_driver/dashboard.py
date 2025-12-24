@@ -915,11 +915,22 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 async function updateWeather() {{
                     try {{
                         const response = await fetch('/weather');
+                        if (!response.ok) {{
+                            console.warn('Weather service returned error:', response.status);
+                            return;
+                        }}
                         const data = await response.json();
                         weatherCache = data.weather || {{}};
-                        console.log('Weather data loaded:', Object.keys(weatherCache).length, 'cities');
+                        const weatherCount = Object.keys(weatherCache).length;
+                        if (weatherCount > 0) {{
+                            console.log('Weather data loaded:', weatherCount, 'cities');
+                        }} else {{
+                            console.info('Weather service connected but no weather data available yet');
+                        }}
                     }} catch (error) {{
-                        console.debug('Weather service not available:', error);
+                        // Weather service unavailable - this is expected and non-critical
+                        // Dashboard continues to function normally without weather data
+                        console.debug('Weather service not available:', error.message);
                     }}
                 }}
                 

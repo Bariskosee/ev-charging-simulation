@@ -8,6 +8,7 @@ import signal
 import sys
 import uvicorn
 from loguru import logger
+from dotenv import load_dotenv
 
 from .config import WeatherConfig
 from .location_manager import LocationManager
@@ -133,6 +134,7 @@ class EVWeatherController:
 
 async def main():
     """Main entry point."""
+    load_dotenv()
     # Configure logger - only show important startup/shutdown messages
     # Routine weather updates are suppressed to keep menu clean
     logger.remove()
