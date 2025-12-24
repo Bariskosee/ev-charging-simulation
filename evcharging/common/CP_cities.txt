@@ -7,4 +7,4 @@ CP-006,Ankara
 CP-007,Zakopane
 CP-008,Warszawa
 CP-009,Antalya
-CP-010,Wiry
+CP-010,Paris
