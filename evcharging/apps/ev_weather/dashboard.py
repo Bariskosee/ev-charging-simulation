@@ -241,36 +241,50 @@ def create_weather_dashboard(controller: "EVWeatherController") -> FastAPI:
     
     @app.get("/weather")
     async def get_weather():
-        """Get current weather data for all monitored locations."""
+        """Get current weather data for all monitored locations.
+        
+        Always returns a valid JSON response with graceful degradation.
+        Never returns HTTP 500 to prevent cascading failures in dependent services.
+        """
+        locations = []
+        weather_data = {}
+        
         try:
-            locations = controller.location_manager.get_locations()
-            weather_data = {}
-            
+            locations = controller.location_manager.get_locations() if controller.location_manager else []
+        except Exception as e:
+            logger.warning(f"Error getting locations: {e}")
+            locations = []
+        
+        try:
             if controller.weather_service:
                 for city in locations:
-                    data = controller.weather_service.get_weather_data(city)
-                    if data:
-                        weather_data[city] = {
-                            "temperature": data.temperature,
-                            "description": data.description,
-                            "timestamp": data.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                            "feels_like": data.feels_like,
-                            "humidity": data.humidity,
-                            "wind_speed": data.wind_speed
-                        }
-            
-            return {
-                "locations": locations,
-                "weather": weather_data,
-                "total_locations": len(locations),
-                "total_with_data": len(weather_data)
-            }
+                    try:
+                        data = controller.weather_service.get_weather_data(city)
+                        if data:
+                            weather_data[city] = {
+                                "temperature": data.temperature,
+                                "description": data.description,
+                                "timestamp": data.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                                "feels_like": data.feels_like,
+                                "humidity": data.humidity,
+                                "wind_speed": data.wind_speed
+                            }
+                    except Exception as city_error:
+                        logger.debug(f"Error getting weather for {city}: {city_error}")
+                        # Continue to next city, don't fail the whole request
+                        continue
         except Exception as e:
-            logger.error(f"Error getting weather data: {e}")
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e)}
-            )
+            logger.warning(f"Error fetching weather data: {e}")
+            # Return empty weather data but don't fail
+        
+        # Always return success with available data (graceful degradation)
+        return {
+            "locations": locations,
+            "weather": weather_data,
+            "total_locations": len(locations),
+            "total_with_data": len(weather_data),
+            "service_status": "degraded" if len(weather_data) == 0 and len(locations) > 0 else "ok"
+        }
     
     @app.get("/api/locations")
     async def list_locations():

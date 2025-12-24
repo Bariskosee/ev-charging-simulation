@@ -8,6 +8,7 @@ Security:
 - Unauthenticated access allowed for backward compatibility (lab mode)
 """
 
+import asyncio
 import os
 from urllib.parse import quote
 
@@ -240,50 +241,77 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
     
     @app.get("/weather")
     async def get_weather():
-        """Get weather data for all CP locations from weather service."""
+        """Get weather data for all CP locations from weather service.
+        
+        Returns weather data if available, or gracefully degrades with empty data
+        if the weather service is unreachable or returns errors.
+        This endpoint NEVER crashes - it always returns a valid JSON response.
+        """
+        cities = set()
+        weather_data = {}
+        service_status = "ok"
+        
         try:
             # Get all unique cities from charging points
-            cities = set()
             for cp in controller.charging_points.values():
                 if hasattr(cp, 'city') and cp.city:
                     cities.add(cp.city)
-            
+        except Exception as e:
+            logger.warning(f"Error getting cities from charging points: {e}")
+            cities = set()
+        
+        try:
             # Fetch weather data from weather service
-            weather_data = {}
             weather_url = os.getenv('WEATHER_SERVICE_URL', 'http://ev-weather:8003')
             async with aiohttp.ClientSession() as session:
                 try:
                     timeout = aiohttp.ClientTimeout(total=2)
                     async with session.get(f'{weather_url}/weather', timeout=timeout) as response:
                         if response.status == 200:
-                            data = await response.json()
-                            locations = set(data.get("locations", []))
-                            # Filter only cities we care about
-                            for city in cities:
-                                if city in data.get('weather', {}):
-                                    weather_data[city] = data['weather'][city]
-                            missing_cities = [city for city in cities if city not in locations]
-                            for city in missing_cities:
-                                try:
-                                    await session.post(
-                                        f"{weather_url}/api/locations/{quote(city)}",
-                                        timeout=timeout
-                                    )
-                                except Exception as e:
-                                    logger.debug(f"Could not register weather location '{city}': {e}")
+                            try:
+                                data = await response.json()
+                                locations = set(data.get("locations", []))
+                                # Filter only cities we care about
+                                for city in cities:
+                                    if city in data.get('weather', {}):
+                                        weather_data[city] = data['weather'][city]
+                                missing_cities = [city for city in cities if city not in locations]
+                                for city in missing_cities:
+                                    try:
+                                        await session.post(
+                                            f"{weather_url}/api/locations/{quote(city)}",
+                                            timeout=timeout
+                                        )
+                                    except Exception as e:
+                                        logger.debug(f"Could not register weather location '{city}': {e}")
+                            except (ValueError, KeyError) as json_error:
+                                logger.warning(f"Weather service returned invalid JSON: {json_error}")
+                                service_status = "degraded"
+                        elif response.status == 401:
+                            logger.warning(f"Weather service authentication failed (401) - invalid API key")
+                            service_status = "auth_error"
+                        else:
+                            logger.warning(f"Weather service returned status {response.status}")
+                            service_status = "degraded"
+                except asyncio.TimeoutError:
+                    logger.debug("Weather service request timed out")
+                    service_status = "timeout"
+                except aiohttp.ClientError as e:
+                    logger.debug(f"Weather service connection failed: {e}")
+                    service_status = "unavailable"
                 except Exception as e:
-                    logger.debug(f"Could not fetch weather data: {e}")
-            
-            return {
-                "cities": list(cities),
-                "weather": weather_data
-            }
+                    logger.warning(f"Could not fetch weather data: {e}")
+                    service_status = "error"
         except Exception as e:
-            logger.error(f"Error getting weather data: {e}")
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e)}
-            )
+            logger.warning(f"Error in weather endpoint: {e}")
+            service_status = "error"
+        
+        # Always return success with available data (even if empty)
+        return {
+            "cities": list(cities),
+            "weather": weather_data,
+            "service_status": service_status
+        }
     
     @app.get("/cp/{cp_id}")
     async def get_charging_point(cp_id: str):
@@ -691,34 +719,51 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 // Fetch and update data without page reload
                 function formatTime(ts) {{
                     if (!ts) return 'Unknown';
-                    const date = new Date(ts);
-                    return date.toLocaleTimeString();
+                    try {{
+                        const date = new Date(ts);
+                        return date.toLocaleTimeString();
+                    }} catch (e) {{
+                        return 'Unknown';
+                    }}
                 }}
 
-                // Fetch weather data
+                // Fetch weather data - fault tolerant, never throws
                 let weatherCache = {{}};
                 let lastWeatherFetch = 0;
                 const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
                 
                 async function updateWeather() {{
                     try {{
-                        const response = await fetch('/weather');
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 5000);
+                        
+                        const response = await fetch('/weather', {{ signal: controller.signal }});
+                        clearTimeout(timeoutId);
+                        
                         if (!response.ok) {{
                             console.warn('Weather service returned error:', response.status);
-                            return;
+                            return; // Don't clear cache, keep old data
                         }}
+                        
                         const data = await response.json();
-                        weatherCache = data.weather || {{}};
-                        const weatherCount = Object.keys(weatherCache).length;
-                        if (weatherCount > 0) {{
-                            console.log('Weather updated:', weatherCount, 'cities');
-                        }} else {{
-                            console.info('Weather service connected but no weather data available yet');
+                        if (data && typeof data.weather === 'object') {{
+                            weatherCache = data.weather || {{}};
+                            const weatherCount = Object.keys(weatherCache).length;
+                            if (weatherCount > 0) {{
+                                console.log('Weather updated:', weatherCount, 'cities');
+                            }} else {{
+                                console.info('Weather service connected but no weather data available yet');
+                            }}
                         }}
                     }} catch (error) {{
                         // Weather service unavailable - this is expected and non-critical
                         // Dashboard continues to function normally without weather data
-                        console.debug('Weather service not available:', error.message);
+                        // Don't clear weatherCache - keep stale data if available
+                        if (error.name === 'AbortError') {{
+                            console.debug('Weather request timed out');
+                        }} else {{
+                            console.debug('Weather service not available:', error.message);
+                        }}
                     }}
                 }}
 
@@ -955,13 +1000,30 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 }}
                 
                 // Initial load - fetch weather first, then start dashboard updates
+                // Wrapped in error handling to ensure dashboard continues even if weather fails
                 (async function() {{
-                    await updateWeather(); // Load weather data first
-                    lastWeatherFetch = Date.now(); // Reset timer after initial fetch
-                    await updateDashboard(); // Then render with weather data
+                    try {{
+                        await updateWeather(); // Load weather data first (fault-tolerant)
+                        lastWeatherFetch = Date.now(); // Reset timer after initial fetch
+                    }} catch (e) {{
+                        console.warn('Initial weather fetch failed, continuing without weather:', e.message);
+                    }}
+                    
+                    try {{
+                        await updateDashboard(); // Then render with weather data (if available)
+                    }} catch (e) {{
+                        console.error('Initial dashboard update failed:', e.message);
+                    }}
                     
                     // Auto-refresh every 1 second for real-time updates
-                    setInterval(updateDashboard, 1000);
+                    // Each update is fault-tolerant and will not crash the page
+                    setInterval(() => {{
+                        try {{
+                            updateDashboard();
+                        }} catch (e) {{
+                            console.error('Dashboard update error:', e.message);
+                        }}
+                    }}, 1000);
                 }})();
             </script>
         </head>

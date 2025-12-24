@@ -6,6 +6,7 @@ from typing import List, Literal, Optional, TYPE_CHECKING
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from loguru import logger
 
 if TYPE_CHECKING:  # pragma: no cover
     from evcharging.apps.ev_driver.main import EVDriver
@@ -230,18 +231,50 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
 
     @app.get("/weather")
     async def get_weather():
-        """Get weather data from central service for all CP locations."""
+        """Get weather data from central service for all CP locations.
+        
+        Returns weather data if available, or gracefully degrades with empty data
+        if the central service is unreachable or returns errors.
+        This endpoint NEVER crashes - it always returns a valid JSON response.
+        """
+        import asyncio
         import os
         import aiohttp
+        
+        service_status = "ok"
+        
         try:
             central_url = os.getenv('DRIVER_CENTRAL_HTTP_URL', 'http://ev-central:8000')
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{central_url}/weather', timeout=aiohttp.ClientTimeout(total=3)) as response:
+                timeout = aiohttp.ClientTimeout(total=3)
+                async with session.get(f'{central_url}/weather', timeout=timeout) as response:
                     if response.status == 200:
-                        return await response.json()
-            return {"cities": [], "weather": {}}
+                        try:
+                            data = await response.json()
+                            # Ensure we have valid data structure
+                            return {
+                                "cities": data.get("cities", []),
+                                "weather": data.get("weather", {}),
+                                "service_status": data.get("service_status", "ok")
+                            }
+                        except (ValueError, KeyError) as json_error:
+                            logger.warning(f"Central service returned invalid JSON: {json_error}")
+                            service_status = "degraded"
+                    else:
+                        logger.warning(f"Central service returned status {response.status} for weather")
+                        service_status = "degraded"
+        except asyncio.TimeoutError:
+            logger.debug("Central weather request timed out")
+            service_status = "timeout"
+        except aiohttp.ClientError as e:
+            logger.debug(f"Central service connection failed: {e}")
+            service_status = "unavailable"
         except Exception as e:
-            return {"cities": [], "weather": {}}
+            logger.warning(f"Error fetching weather from central: {e}")
+            service_status = "error"
+        
+        # Always return success with empty weather data (graceful degradation)
+        return {"cities": [], "weather": {}, "service_status": service_status}
 
     # ------------------------------------------------------------------
     # HTML Dashboard
@@ -898,44 +931,67 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
                 
                 function showNotification(message, type = 'info') {{
-                    const container = document.getElementById('notifications');
-                    const notification = document.createElement('div');
-                    notification.className = `notification ${{type}}`;
-                    notification.innerHTML = `
-                        <div class="notification-title">${{type}}</div>
-                        ${{message}}
-                    `;
-                    container.appendChild(notification);
-                    
-                    setTimeout(() => {{
-                        notification.remove();
-                    }}, 5000);
+                    try {{
+                        const container = document.getElementById('notifications');
+                        if (!container) return;
+                        const notification = document.createElement('div');
+                        notification.className = `notification ${{type}}`;
+                        notification.innerHTML = `
+                            <div class="notification-title">${{type}}</div>
+                            ${{message}}
+                        `;
+                        container.appendChild(notification);
+                        
+                        setTimeout(() => {{
+                            try {{
+                                notification.remove();
+                            }} catch (e) {{
+                                // Notification may already be removed
+                            }}
+                        }}, 5000);
+                    }} catch (e) {{
+                        console.warn('Could not show notification:', e.message);
+                    }}
                 }}
                 
+                // Fault-tolerant weather update - never throws
                 async function updateWeather() {{
                     try {{
-                        const response = await fetch('/weather');
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 5000);
+                        
+                        const response = await fetch('/weather', {{ signal: controller.signal }});
+                        clearTimeout(timeoutId);
+                        
                         if (!response.ok) {{
                             console.warn('Weather service returned error:', response.status);
-                            return;
+                            return; // Don't clear cache, keep old data
                         }}
+                        
                         const data = await response.json();
-                        weatherCache = data.weather || {{}};
-                        const weatherCount = Object.keys(weatherCache).length;
-                        if (weatherCount > 0) {{
-                            console.log('Weather data loaded:', weatherCount, 'cities');
-                        }} else {{
-                            console.info('Weather service connected but no weather data available yet');
+                        if (data && typeof data.weather === 'object') {{
+                            weatherCache = data.weather || {{}};
+                            const weatherCount = Object.keys(weatherCache).length;
+                            if (weatherCount > 0) {{
+                                console.log('Weather data loaded:', weatherCount, 'cities');
+                            }} else {{
+                                console.info('Weather service connected but no weather data available yet');
+                            }}
                         }}
                     }} catch (error) {{
                         // Weather service unavailable - this is expected and non-critical
                         // Dashboard continues to function normally without weather data
-                        console.debug('Weather service not available:', error.message);
+                        // Don't clear weatherCache - keep stale data if available
+                        if (error.name === 'AbortError') {{
+                            console.debug('Weather request timed out');
+                        }} else {{
+                            console.debug('Weather service not available:', error.message);
+                        }}
                     }}
                 }}
                 
                 async function loadChargingPoints() {{
-                    // Fetch weather if enough time has passed
+                    // Fetch weather if enough time has passed (fire and forget, don't block)
                     const now = Date.now();
                     if (now - lastWeatherFetch > WEATHER_FETCH_INTERVAL) {{
                         lastWeatherFetch = now;
@@ -1355,7 +1411,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                     console.log('[INIT] Starting dashboard initialization...');
                     try {{
                         console.log('[INIT] Loading weather data...');
-                        await updateWeather(); // Load weather data first
+                        await updateWeather(); // Load weather data first (fault-tolerant)
                         lastWeatherFetch = Date.now(); // Reset timer after initial fetch
                         console.log('[INIT] Weather loaded, now loading charging points...');
                     }} catch (weatherError) {{
@@ -1370,22 +1426,25 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                         console.error('[INIT] loadChargingPoints failed:', cpError);
                     }}
                     
-                    loadActiveSession();
-                    loadFavorites();
-                    updateSyncStatus();
-                    loadErrors();
+                    // Load other components (each is fault-tolerant)
+                    try {{ loadActiveSession(); }} catch (e) {{ console.warn('loadActiveSession error:', e); }}
+                    try {{ loadFavorites(); }} catch (e) {{ console.warn('loadFavorites error:', e); }}
+                    try {{ updateSyncStatus(); }} catch (e) {{ console.warn('updateSyncStatus error:', e); }}
+                    try {{ loadErrors(); }} catch (e) {{ console.warn('loadErrors error:', e); }}
                     console.log('[INIT] Initial load complete, starting intervals...');
                     
-                    // Auto-refresh every 2 seconds
+                    // Auto-refresh every 2 seconds (each call is fault-tolerant)
                     setInterval(() => {{
-                        loadChargingPoints();
-                        loadActiveSession();
-                        updateSyncStatus();
-                        loadErrors();
+                        try {{ loadChargingPoints(); }} catch (e) {{ console.warn('loadChargingPoints interval error:', e); }}
+                        try {{ loadActiveSession(); }} catch (e) {{ console.warn('loadActiveSession interval error:', e); }}
+                        try {{ updateSyncStatus(); }} catch (e) {{ console.warn('updateSyncStatus interval error:', e); }}
+                        try {{ loadErrors(); }} catch (e) {{ console.warn('loadErrors interval error:', e); }}
                     }}, 2000);
                     
                     // Refresh favorites every 10 seconds
-                    setInterval(loadFavorites, 10000);
+                    setInterval(() => {{
+                        try {{ loadFavorites(); }} catch (e) {{ console.warn('loadFavorites interval error:', e); }}
+                    }}, 10000);
                 }})();
                 
                 // Load and display system errors
