@@ -691,8 +691,17 @@ class EVCentralController:
             # Track if this is a restoration (was DOWN, now OK)
             was_down = cp.monitor_status == ChargingPoint.MonitorStatus.DOWN
             was_disconnected = cp.state == CPState.DISCONNECTED
+            was_pending = cp.security_status == CPSecurityStatus.PENDING
             
             cp.record_monitor_heartbeat()
+            
+            # Auto-authorize CP for lab environment if it was pending
+            # This handles CPs loaded from registry that receive their first heartbeat
+            if was_pending or not cp.is_authenticated:
+                cp.is_authenticated = True
+                cp.has_encryption_key = True
+                cp.security_status = CPSecurityStatus.ACTIVE
+                logger.info(f"CP {cp_id} auto-authorized via monitor heartbeat - security: ACTIVE")
             
             # Log restoration event if recovering from DOWN state
             if was_down or was_disconnected:
@@ -1089,77 +1098,107 @@ class EVCentralController:
         return decrypted, cp_id
     
     async def process_messages(self):
-        """Main message processing loop."""
-        async for msg in self.consumer.consume():
+        """Main message processing loop with resilient error handling."""
+        logger.info("Starting message processing loop...")
+        
+        while self._running:
             try:
-                topic = msg["topic"]
-                value = msg["value"]
-                
-                if topic == TOPICS["DRIVER_REQUESTS"]:
-                    # Driver requests are NOT encrypted (from driver app)
-                    request = DriverRequest(**value)
-                    await self.handle_driver_request(request)
-                
-                elif topic == TOPICS["CP_STATUS"]:
-                    # Try to decrypt if encrypted
-                    decrypted, cp_id = self._try_decrypt_cp_message(value)
-                    if decrypted is None:
-                        logger.error(f"Failed to decrypt CP_STATUS from {cp_id}")
-                        # Report error for dashboard display
-                        report_communication_error(
+                async for msg in self.consumer.consume():
+                    if not self._running:
+                        break
+                    
+                    try:
+                        topic = msg["topic"]
+                        value = msg["value"]
+                        
+                        # Use asyncio.wait_for to prevent any single message from blocking too long
+                        await asyncio.wait_for(
+                            self._process_single_message(topic, value),
+                            timeout=10.0  # 10 second timeout per message
+                        )
+                        
+                    except asyncio.TimeoutError:
+                        logger.error(f"Timeout processing message from {msg.get('topic')} - skipping")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error processing message from {msg.get('topic')}: {e}")
+                        # Report message processing error
+                        self.error_manager.report_error(
+                            category=ErrorCategory.COMMUNICATION,
                             source=ErrorSource.CENTRAL,
-                            target=cp_id or "Unknown CP",
-                            component=f"CP {cp_id or 'Unknown'}",
-                            detail="Failed to decrypt or parse CP_STATUS message"
+                            target=msg.get('topic', 'Unknown'),
+                            message=f"Error processing message. Messages are incomprehensible.",
+                            severity=ErrorSeverity.ERROR,
+                            technical_detail=str(e)
                         )
                         continue
-                    status = CPStatus(**decrypted)
-                    await self.handle_cp_status(status)
-                
-                elif topic == TOPICS["CP_TELEMETRY"]:
-                    # Try to decrypt if encrypted
-                    decrypted, cp_id = self._try_decrypt_cp_message(value)
-                    if decrypted is None:
-                        logger.error(f"Failed to decrypt CP_TELEMETRY from {cp_id}")
-                        # Report error for dashboard display
-                        report_communication_error(
-                            source=ErrorSource.CENTRAL,
-                            target=cp_id or "Unknown CP",
-                            component=f"CP {cp_id or 'Unknown'}",
-                            detail="Failed to decrypt or parse CP_TELEMETRY message"
-                        )
-                        continue
-                    telemetry = CPTelemetry(**decrypted)
-                    await self.handle_cp_telemetry(telemetry)
-                
-                elif topic == TOPICS["CP_SESSION_END"]:
-                    logger.warning("=== CENTRAL received SESSION_END event")
-                    # Try to decrypt if encrypted
-                    decrypted, cp_id = self._try_decrypt_cp_message(value)
-                    if decrypted is None:
-                        logger.error(f"Failed to decrypt CP_SESSION_END from {cp_id}")
-                        # Report error for dashboard display
-                        report_communication_error(
-                            source=ErrorSource.CENTRAL,
-                            target=cp_id or "Unknown CP",
-                            component=f"CP {cp_id or 'Unknown'}",
-                            detail="Failed to decrypt or parse CP_SESSION_END message"
-                        )
-                        continue
-                    ticket = CPSessionTicket(**decrypted)
-                    await self.handle_session_end(ticket)
-            
+                        
+            except asyncio.CancelledError:
+                logger.info("Message processing cancelled")
+                break
             except Exception as e:
-                logger.error(f"Error processing message from {msg.get('topic')}: {e}")
-                # Report message processing error
-                self.error_manager.report_error(
-                    category=ErrorCategory.COMMUNICATION,
+                logger.error(f"Consumer error: {e} - attempting to continue...")
+                # Brief pause before retry to avoid tight loop on persistent errors
+                await asyncio.sleep(1.0)
+                continue
+        
+        logger.info("Message processing loop stopped")
+    
+    async def _process_single_message(self, topic: str, value: dict):
+        """Process a single Kafka message. Extracted for timeout handling."""
+        if topic == TOPICS["DRIVER_REQUESTS"]:
+            # Driver requests are NOT encrypted (from driver app)
+            request = DriverRequest(**value)
+            await self.handle_driver_request(request)
+        
+        elif topic == TOPICS["CP_STATUS"]:
+            # Try to decrypt if encrypted
+            decrypted, cp_id = self._try_decrypt_cp_message(value)
+            if decrypted is None:
+                logger.error(f"Failed to decrypt CP_STATUS from {cp_id}")
+                # Report error for dashboard display
+                report_communication_error(
                     source=ErrorSource.CENTRAL,
-                    target=msg.get('topic', 'Unknown'),
-                    message=f"Error processing message. Messages are incomprehensible.",
-                    severity=ErrorSeverity.ERROR,
-                    technical_detail=str(e)
+                    target=cp_id or "Unknown CP",
+                    component=f"CP {cp_id or 'Unknown'}",
+                    detail="Failed to decrypt or parse CP_STATUS message"
                 )
+                return
+            status = CPStatus(**decrypted)
+            await self.handle_cp_status(status)
+        
+        elif topic == TOPICS["CP_TELEMETRY"]:
+            # Try to decrypt if encrypted
+            decrypted, cp_id = self._try_decrypt_cp_message(value)
+            if decrypted is None:
+                logger.error(f"Failed to decrypt CP_TELEMETRY from {cp_id}")
+                # Report error for dashboard display
+                report_communication_error(
+                    source=ErrorSource.CENTRAL,
+                    target=cp_id or "Unknown CP",
+                    component=f"CP {cp_id or 'Unknown'}",
+                    detail="Failed to decrypt or parse CP_TELEMETRY message"
+                )
+                return
+            telemetry = CPTelemetry(**decrypted)
+            await self.handle_cp_telemetry(telemetry)
+        
+        elif topic == TOPICS["CP_SESSION_END"]:
+            logger.warning("=== CENTRAL received SESSION_END event")
+            # Try to decrypt if encrypted
+            decrypted, cp_id = self._try_decrypt_cp_message(value)
+            if decrypted is None:
+                logger.error(f"Failed to decrypt CP_SESSION_END from {cp_id}")
+                # Report error for dashboard display
+                report_communication_error(
+                    source=ErrorSource.CENTRAL,
+                    target=cp_id or "Unknown CP",
+                    component=f"CP {cp_id or 'Unknown'}",
+                    detail="Failed to decrypt or parse CP_SESSION_END message"
+                )
+                return
+            ticket = CPSessionTicket(**decrypted)
+            await self.handle_session_end(ticket)
     
     def get_dashboard_data(self) -> dict:
         """Get current state for dashboard display."""

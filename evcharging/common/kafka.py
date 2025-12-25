@@ -58,12 +58,20 @@ class KafkaConsumerHelper:
         bootstrap_servers: str,
         topics: list[str],
         group_id: str,
-        auto_offset_reset: str = "latest"
+        auto_offset_reset: str = "latest",
+        session_timeout_ms: int = 10000,
+        heartbeat_interval_ms: int = 3000,
+        max_poll_interval_ms: int = 30000,
+        request_timeout_ms: int = 40000,
     ):
         self.bootstrap_servers = bootstrap_servers
         self.topics = topics
         self.group_id = group_id
         self.auto_offset_reset = auto_offset_reset
+        self.session_timeout_ms = session_timeout_ms
+        self.heartbeat_interval_ms = heartbeat_interval_ms
+        self.max_poll_interval_ms = max_poll_interval_ms
+        self.request_timeout_ms = request_timeout_ms
         self.consumer: Optional[AIOKafkaConsumer] = None
     
     async def start(self):
@@ -75,6 +83,13 @@ class KafkaConsumerHelper:
             auto_offset_reset=self.auto_offset_reset,
             value_deserializer=lambda m: json.loads(m.decode('utf-8')),
             key_deserializer=lambda k: k.decode('utf-8') if k else None,
+            # Timeout settings for faster recovery during network issues
+            session_timeout_ms=self.session_timeout_ms,
+            heartbeat_interval_ms=self.heartbeat_interval_ms,
+            max_poll_interval_ms=self.max_poll_interval_ms,
+            request_timeout_ms=self.request_timeout_ms,
+            # Retry settings for resilience
+            retry_backoff_ms=100,
         )
         await self.consumer.start()
         logger.info(f"Kafka consumer started: topics={self.topics}, group={self.group_id}")
@@ -86,19 +101,39 @@ class KafkaConsumerHelper:
             logger.info("Kafka consumer stopped")
     
     async def consume(self) -> AsyncIterator[dict]:
-        """Consume messages from subscribed topics."""
+        """Consume messages from subscribed topics with timeout-based polling.
+        
+        Uses getmany() with timeout to ensure we don't block indefinitely,
+        allowing for graceful handling of network issues and partial restarts.
+        """
         if not self.consumer:
             raise RuntimeError("Consumer not started")
         
-        async for msg in self.consumer:
-            logger.debug(f"Received from {msg.topic}: {msg.value}")
-            yield {
-                "topic": msg.topic,
-                "key": msg.key,
-                "value": msg.value,
-                "partition": msg.partition,
-                "offset": msg.offset,
-            }
+        while True:
+            try:
+                # Poll with 1 second timeout - returns dict of {TopicPartition: [messages]}
+                # This prevents blocking indefinitely during network issues
+                records = await self.consumer.getmany(timeout_ms=1000, max_records=100)
+                
+                for tp, messages in records.items():
+                    for msg in messages:
+                        logger.debug(f"Received from {msg.topic}: {msg.value}")
+                        yield {
+                            "topic": msg.topic,
+                            "key": msg.key,
+                            "value": msg.value,
+                            "partition": msg.partition,
+                            "offset": msg.offset,
+                        }
+                        
+            except asyncio.CancelledError:
+                logger.info("Kafka consumer cancelled")
+                raise
+            except Exception as e:
+                logger.warning(f"Kafka consume error: {e} - will retry")
+                # Brief yield to allow other tasks to run
+                await asyncio.sleep(0.1)
+                continue
 
 
 async def ensure_topics(bootstrap_servers: str, topics: list[str], num_partitions: int = 1):
