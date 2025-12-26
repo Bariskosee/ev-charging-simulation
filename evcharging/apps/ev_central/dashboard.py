@@ -686,6 +686,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
+                    flex-wrap: wrap;
+                    gap: 10px;
                 }}
                 .request-info {{
                     display: flex;
@@ -700,6 +702,20 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 }}
                 .request-id {{
                     font-family: monospace;
+                }}
+                .stop-btn-small {{
+                    background: #e53935;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 0.9em;
+                    font-weight: bold;
+                    transition: background 0.2s;
+                }}
+                .stop-btn-small:hover {{
+                    background: #c62828;
                 }}
                 .refresh-btn {{
                     background: #667eea;
@@ -990,6 +1006,9 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                 <span class="request-id">ID: ${{req.request_id}}</span>
                                 <span class="request-time">${{new Date(req.ts).toLocaleTimeString()}}</span>
                             </div>
+                            <button class="stop-btn-small" onclick="stopCharging('${{req.cp_id}}')" title="End charging session">
+                                ⏹️ End Session
+                            </button>
                         </div>
                     `).join('');
                 }}

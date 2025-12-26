@@ -341,10 +341,58 @@ class CPSecurityService:
         
         CPEncryptionService.initialize_key_wrapping(wrapping_secret)
         
+        # Track which CPs have keys loaded from environment (for logging)
+        self._env_loaded_keys: set = set()
+        
         # Auto-migrate legacy keys on startup
         self._auto_migrate_legacy_keys()
         
         logger.info("CP Security Service initialized")
+    
+    def _load_key_from_env(self, cp_id: str) -> Optional[bytes]:
+        """
+        Load encryption key from environment variable.
+        
+        Keys are expected in format: EV_CP_XXX_ENCRYPTION_KEY (base64 encoded)
+        where XXX is the CP number (e.g., 001, 002).
+        
+        Args:
+            cp_id: Charging point identifier (e.g., "CP-001")
+            
+        Returns:
+            Encryption key bytes or None if not found
+        """
+        import base64
+        
+        # Convert CP-001 to EV_CP_001_ENCRYPTION_KEY
+        cp_num = cp_id.replace("CP-", "").replace("cp-", "")
+        env_var = f"EV_CP_{cp_num}_ENCRYPTION_KEY"
+        
+        key_b64 = os.environ.get(env_var)
+        if not key_b64:
+            return None
+        
+        try:
+            key = base64.b64decode(key_b64)
+            
+            # Validate key length (should be 32 bytes for AES-256)
+            if len(key) != 32:
+                logger.warning(
+                    f"Key from {env_var} has invalid length ({len(key)} bytes). "
+                    "Expected 32 bytes for AES-256."
+                )
+                return None
+            
+            # Log only once per CP
+            if cp_id not in self._env_loaded_keys:
+                logger.info(f"Loaded encryption key for {cp_id} from environment ({env_var})")
+                self._env_loaded_keys.add(cp_id)
+            
+            return key
+        
+        except Exception as e:
+            logger.error(f"Failed to decode key from {env_var}: {e}")
+            return None
     
     def _auto_migrate_legacy_keys(self) -> None:
         """
@@ -769,6 +817,12 @@ class CPSecurityService:
         # Check cache first
         if cp_id in self._key_cache:
             return self._key_cache[cp_id]
+        
+        # Try to load from environment variable first (for lab/testing)
+        env_key = self._load_key_from_env(cp_id)
+        if env_key:
+            self._key_cache[cp_id] = env_key
+            return env_key
         
         # Try to retrieve and unwrap from database
         key_info = self.security_db.get_key_info(cp_id)

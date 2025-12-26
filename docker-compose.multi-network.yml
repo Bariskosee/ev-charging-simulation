@@ -118,6 +118,12 @@ services:
       EV_SECURITY_SECRET: ${EV_SECURITY_SECRET}
       EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
       EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      # Per-CP encryption keys (must match CP Engine keys for encrypted communication)
+      EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
+      EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
+      EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
+      EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
+      EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_healthy
@@ -251,6 +257,8 @@ services:
       CP_ENGINE_KW_RATE: 43.0
       CP_ENGINE_EURO_RATE: 0.32
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -272,6 +280,8 @@ services:
       CP_ENGINE_KW_RATE: 150.0
       CP_ENGINE_EURO_RATE: 0.40
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -293,6 +303,8 @@ services:
       CP_ENGINE_KW_RATE: 7.2
       CP_ENGINE_EURO_RATE: 0.28
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
