@@ -23,7 +23,7 @@ class Location(BaseModel):
 class ChargingPointStatus(BaseModel):
     cp_id: str
     name: str
-    status: Literal["FREE", "OCCUPIED", "OFFLINE"]
+    status: Literal["FREE", "OCCUPIED", "OFFLINE", "ENCRYPTION_ERROR"]
     power_kw: float
     connector_type: str
     location: Location
@@ -513,6 +513,16 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 .status-FREE {{ background: #4caf50; color: white; }}
                 .status-OCCUPIED {{ background: #ff9800; color: white; }}
                 .status-OFFLINE {{ background: #f44336; color: white; }}
+                .status-ENCRYPTION_ERROR {{ 
+                    background: linear-gradient(135deg, #b71c1c 0%, #d32f2f 100%); 
+                    color: white;
+                    animation: pulse-error 1.5s ease-in-out infinite;
+                }}
+                
+                @keyframes pulse-error {{
+                    0%, 100% {{ opacity: 1; transform: scale(1); }}
+                    50% {{ opacity: 0.85; transform: scale(1.02); }}
+                }}
                 
                 .cp-location {{
                     color: #667eea;
@@ -564,6 +574,34 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                     cursor: not-allowed;
                     transform: none;
                     box-shadow: none;
+                }}
+                
+                .request-btn.btn-danger {{
+                    background: linear-gradient(135deg, #b71c1c 0%, #d32f2f 100%);
+                }}
+                
+                .request-btn.btn-danger:hover {{
+                    background: linear-gradient(135deg, #d32f2f 0%, #e53935 100%);
+                }}
+                
+                .request-btn.btn-danger:disabled {{
+                    background: linear-gradient(135deg, #b71c1c 0%, #d32f2f 100%);
+                    opacity: 0.7;
+                }}
+                
+                .encryption-warning {{
+                    background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+                    color: #b71c1c;
+                    padding: 10px 12px;
+                    border-radius: 6px;
+                    font-size: 0.85em;
+                    margin: 10px 0;
+                    border-left: 4px solid #d32f2f;
+                }}
+                
+                .cp-card.encryption-error {{
+                    border: 2px solid #d32f2f;
+                    box-shadow: 0 0 10px rgba(211, 47, 47, 0.2);
                 }}
                 
                 .stop-btn {{
@@ -1083,10 +1121,30 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 
                 function renderCpCard(cp) {{
                     const isFavorite = favorites.has(cp.cp_id);
-                    const isDisabled = cp.status !== 'FREE' || activeSession;
+                    const isEncryptionError = cp.status === 'ENCRYPTION_ERROR';
+                    const isDisabled = cp.status !== 'FREE' || activeSession || isEncryptionError;
+                    
+                    // Determine button text and style
+                    let buttonText = '⚡ Start Charging';
+                    let buttonClass = 'request-btn';
+                    
+                    if (activeSession) {{
+                        buttonText = '⏳ Session Active';
+                    }} else if (isEncryptionError) {{
+                        buttonText = '🔐 Security Error - Unavailable';
+                        buttonClass = 'request-btn btn-danger';
+                    }} else if (cp.status !== 'FREE') {{
+                        buttonText = '⏳ ' + cp.status;
+                    }}
+                    
+                    // Status badge text
+                    let statusBadgeText = cp.status;
+                    if (isEncryptionError) {{
+                        statusBadgeText = '🔐 ENCRYPTION ERROR';
+                    }}
                     
                     return `
-                        <div class="cp-card ${{isFavorite ? 'favorite' : ''}}">
+                        <div class="cp-card ${{isFavorite ? 'favorite' : ''}} ${{isEncryptionError ? 'encryption-error' : ''}}">
                             <div class="cp-header">
                                 <div>
                                     <div class="cp-id">${{cp.cp_id}}</div>
@@ -1099,7 +1157,13 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                                 >★</button>
                             </div>
                             
-                            <span class="status-badge status-${{cp.status}}">${{cp.status}}</span>
+                            <span class="status-badge status-${{cp.status}}">${{statusBadgeText}}</span>
+                            
+                            ${{isEncryptionError ? `
+                            <div class="encryption-warning">
+                                ⚠️ This charging point has a key mismatch. Contact support.
+                            </div>
+                            ` : ''}}
                             
                             ${{(() => {{
                                 if (cp.location.city && weatherCache[cp.location.city] && typeof weatherCache[cp.location.city].temperature === 'number') {{
@@ -1148,11 +1212,11 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                             </div>
                             
                             <button 
-                                class="request-btn" 
+                                class="${{buttonClass}}" 
                                 onclick="requestSession('${{cp.cp_id}}')"
                                 ${{isDisabled ? 'disabled' : ''}}
                             >
-                                ${{activeSession ? '⏳ Session Active' : cp.status === 'FREE' ? '⚡ Start Charging' : '⏳ ' + cp.status}}
+                                ${{buttonText}}
                             </button>
                         </div>
                     `;

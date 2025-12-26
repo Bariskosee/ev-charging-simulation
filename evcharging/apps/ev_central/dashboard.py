@@ -167,7 +167,10 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         """
         Receive heartbeat ping from CP Monitor.
         
-        Security: Accepts optional JWT token for authenticated heartbeats.
+        Security: 
+        - Accepts optional JWT token for authenticated heartbeats.
+        - If signature is present, verifies HMAC signature with encryption key.
+        - Rejects CPs with key mismatch.
         """
         cp_id = payload.get("cp_id")
         if not cp_id:
@@ -182,8 +185,45 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     detail="CP ID in token does not match heartbeat"
                 )
 
-        controller.record_monitor_ping(cp_id)
-        return {"success": True, "cp_id": cp_id, "authenticated": token_claims is not None}
+        # Check if heartbeat includes signature for encryption key verification
+        signature = payload.get("signature")
+        signed_message = payload.get("signed_message")
+        
+        signature_valid = None  # None = no signature provided, True = valid, False = invalid
+        signature_error = None
+        
+        if signature and signed_message:
+            # Verify the signature using the CP's encryption key
+            is_valid, error_msg = controller.verify_heartbeat_signature(cp_id, signed_message, signature)
+            signature_valid = is_valid
+            if not is_valid:
+                signature_error = error_msg
+                logger.error(
+                    f"🔐 SECURITY ALERT: CP {cp_id} heartbeat signature FAILED. "
+                    f"Error: {error_msg}. "
+                    f"The CP may have an incorrect encryption key!"
+                )
+        else:
+            # No signature provided - check if Central expects one (has key for this CP)
+            if controller.cp_security.get_key_for_cp(cp_id):
+                # Central has a key but CP didn't sign - this is a security issue!
+                logger.error(
+                    f"🔐 SECURITY ALERT: CP {cp_id} sent unsigned heartbeat but "
+                    f"Central has encryption key configured! "
+                    f"The CP may have an incorrect or missing encryption key."
+                )
+                signature_valid = False
+                signature_error = "Unsigned heartbeat from CP with encryption configured"
+
+        # Record the heartbeat (this will also handle encryption error state)
+        controller.record_monitor_ping(cp_id, signature_valid=signature_valid, signature_error=signature_error)
+        
+        return {
+            "success": True, 
+            "cp_id": cp_id, 
+            "authenticated": token_claims is not None,
+            "signature_verified": signature_valid
+        }
     
     @app.post("/stop-session")
     async def stop_session(payload: dict):

@@ -506,6 +506,12 @@ class EVDriver:
         state = point.get("engine_state")
         display_state = point.get("state")
         current_driver = point.get("current_driver")
+        communication_status = point.get("communication_status", "OK")
+        
+        # CRITICAL: Check for encryption error first
+        if display_state == "ENCRYPTION_ERROR" or communication_status == "ENCRYPTION_ERROR":
+            return "ENCRYPTION_ERROR"
+        
         if display_state == "DISCONNECTED":
             return "OFFLINE"
         if display_state == "BROKEN":

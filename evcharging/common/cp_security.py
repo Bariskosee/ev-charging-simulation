@@ -12,8 +12,10 @@ Provides:
 
 import secrets
 import hashlib
+import hmac
 import json
 import os
+import base64
 from typing import Optional, Dict, Tuple
 from enum import Enum
 from datetime import datetime
@@ -146,6 +148,43 @@ class CPEncryptionService:
             backend=default_backend()
         )
         return kdf.derive(secret.encode('utf-8'))
+    
+    @staticmethod
+    def sign_message(message: str, key: bytes) -> str:
+        """
+        Create HMAC-SHA256 signature for a message.
+        Used for heartbeat verification.
+        
+        Args:
+            message: Message to sign (e.g., JSON payload)
+            key: 32-byte encryption key
+            
+        Returns:
+            Base64-encoded HMAC signature
+        """
+        signature = hmac.new(key, message.encode('utf-8'), hashlib.sha256).digest()
+        return base64.b64encode(signature).decode('utf-8')
+    
+    @staticmethod
+    def verify_signature(message: str, signature_b64: str, key: bytes) -> bool:
+        """
+        Verify HMAC-SHA256 signature of a message.
+        
+        Args:
+            message: Original message
+            signature_b64: Base64-encoded signature to verify
+            key: 32-byte encryption key
+            
+        Returns:
+            True if signature is valid
+        """
+        try:
+            expected_sig = hmac.new(key, message.encode('utf-8'), hashlib.sha256).digest()
+            actual_sig = base64.b64decode(signature_b64)
+            return hmac.compare_digest(expected_sig, actual_sig)
+        except Exception as e:
+            logger.error(f"Signature verification failed: {e}")
+            return False
     
     @staticmethod
     def encrypt_payload(plaintext: str, key: bytes) -> str:
@@ -1016,3 +1055,42 @@ class CPSecurityService:
         except Exception as e:
             logger.error(f"Failed to get status for CP {cp_id}: {e}")
             return None
+    
+    # ==================== Heartbeat Signature Verification ====================
+    
+    def verify_heartbeat_signature(self, cp_id: str, message: str, signature: str) -> Tuple[bool, str]:
+        """
+        Verify the HMAC signature of a heartbeat message from a CP.
+        This ensures the CP has the correct encryption key.
+        
+        Args:
+            cp_id: Charging point identifier
+            message: The message that was signed (JSON string of heartbeat payload)
+            signature: Base64-encoded HMAC-SHA256 signature
+            
+        Returns:
+            Tuple of (success: bool, error_message: str)
+            If success is True, error_message is empty.
+            If success is False, error_message describes the reason.
+        """
+        try:
+            # Get the expected key for this CP
+            key = self.get_key_for_cp(cp_id)
+            if not key:
+                return (False, f"No encryption key found for CP {cp_id}")
+            
+            # Verify the signature
+            is_valid = CPEncryptionService.verify_signature(message, signature, key)
+            
+            if is_valid:
+                return (True, "")
+            else:
+                logger.error(
+                    f"🔐 SECURITY ALERT: Heartbeat signature verification FAILED for CP {cp_id}. "
+                    f"The CP may have an incorrect encryption key or the message was tampered."
+                )
+                return (False, "Signature verification failed - encryption key mismatch")
+        
+        except Exception as e:
+            logger.error(f"Error verifying heartbeat signature for CP {cp_id}: {e}")
+            return (False, f"Verification error: {str(e)}")

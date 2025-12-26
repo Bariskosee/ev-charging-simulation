@@ -330,6 +330,7 @@ services:
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
+      EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -360,6 +361,7 @@ services:
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
+      EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -388,6 +390,7 @@ services:
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
+      EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -416,6 +419,7 @@ services:
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
+      EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -444,6 +448,7 @@ services:
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
+      EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started

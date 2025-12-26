@@ -683,8 +683,14 @@ class EVCentralController:
         else:
             logger.error(f"Cannot clear fault for unknown CP {cp_id}")
 
-    def record_monitor_ping(self, cp_id: str):
-        """Record heartbeat from CP Monitor."""
+    def record_monitor_ping(self, cp_id: str, signature_valid: bool | None = None, signature_error: str | None = None):
+        """Record heartbeat from CP Monitor.
+        
+        Args:
+            cp_id: Charging point identifier
+            signature_valid: None if no signature, True if valid, False if invalid
+            signature_error: Error message if signature verification failed
+        """
         if cp_id in self.charging_points:
             cp = self.charging_points[cp_id]
             
@@ -693,15 +699,49 @@ class EVCentralController:
             was_disconnected = cp.state == CPState.DISCONNECTED
             was_pending = cp.security_status == CPSecurityStatus.PENDING
             
+            # Handle signature verification result
+            if signature_valid is False:
+                # CRITICAL: Key mismatch detected - mark CP as encryption error
+                cp.set_encryption_error("KEY_MISMATCH", signature_error or "Encryption key verification failed")
+                cp.is_authenticated = False
+                cp.has_encryption_key = False  # Key is present but wrong
+                logger.error(
+                    f"🔐 SECURITY: CP {cp_id} marked as ENCRYPTION_ERROR - "
+                    f"heartbeat signature verification failed. "
+                    f"Charging operations BLOCKED for this CP."
+                )
+                self._add_system_event(
+                    "SECURITY_ALERT",
+                    cp_id,
+                    f"CP {cp_id} encryption key mismatch detected - charging BLOCKED",
+                    "ERROR"
+                )
+                # Still record the heartbeat (monitor is alive, but untrusted)
+                cp.record_monitor_heartbeat()
+                return
+            elif signature_valid is True:
+                # Valid signature - clear any previous encryption errors
+                if cp.communication_status == "ENCRYPTION_ERROR":
+                    cp.clear_encryption_error()
+                    logger.info(f"CP {cp_id} encryption key verified - communication restored")
+                    self._add_system_event(
+                        "RESTORATION",
+                        cp_id,
+                        f"CP {cp_id} encryption key verified - secure communication restored",
+                        "SUCCESS"
+                    )
+            # If signature_valid is None, heartbeat was unsigned (legacy/compatibility mode)
+            
             cp.record_monitor_heartbeat()
             
             # Auto-authorize CP for lab environment if it was pending
-            # This handles CPs loaded from registry that receive their first heartbeat
-            if was_pending or not cp.is_authenticated:
-                cp.is_authenticated = True
-                cp.has_encryption_key = True
-                cp.security_status = CPSecurityStatus.ACTIVE
-                logger.info(f"CP {cp_id} auto-authorized via monitor heartbeat - security: ACTIVE")
+            # But NOT if there's an encryption error
+            if cp.communication_status != "ENCRYPTION_ERROR":
+                if was_pending or not cp.is_authenticated:
+                    cp.is_authenticated = True
+                    cp.has_encryption_key = True
+                    cp.security_status = CPSecurityStatus.ACTIVE
+                    logger.info(f"CP {cp_id} auto-authorized via monitor heartbeat - security: ACTIVE")
             
             # Log restoration event if recovering from DOWN state
             if was_down or was_disconnected:
@@ -727,6 +767,19 @@ class EVCentralController:
             
             # Log the auto-registration
             logger.info(f"CP {cp_id} auto-registered via monitor heartbeat - state: ACTIVATED, security: ACTIVE")
+    
+    def verify_heartbeat_signature(self, cp_id: str, message: str, signature: str) -> tuple[bool, str]:
+        """Verify the HMAC signature of a heartbeat message.
+        
+        Args:
+            cp_id: Charging point identifier
+            message: The message that was signed
+            signature: Base64-encoded HMAC-SHA256 signature
+            
+        Returns:
+            Tuple of (success: bool, error_message: str)
+        """
+        return self.cp_security.verify_heartbeat_signature(cp_id, message, signature)
 
     async def handle_driver_request(self, request: DriverRequest):
         """Process a driver charging request."""

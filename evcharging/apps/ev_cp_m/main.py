@@ -7,12 +7,16 @@ Responsibilities:
 - Perform periodic health checks to CP Engine
 - Detect and report faults
 - Allow manual fault simulation via keyboard
+- Sign heartbeats with encryption key for verification
 """
 
 import asyncio
 import argparse
 import sys
 import signal
+import os
+import base64
+import json
 from datetime import datetime
 import httpx
 from loguru import logger
@@ -21,6 +25,7 @@ from evcharging.common.config import CPMonitorConfig
 from evcharging.common.messages import CPRegistration
 from evcharging.common.utils import utc_now
 from evcharging.common.registry_client import RegistryClient
+from evcharging.common.cp_security import CPEncryptionService
 
 
 class CPMonitor:
@@ -33,6 +38,10 @@ class CPMonitor:
         self.fault_simulated = False
         self._running = False
         
+        # Load encryption key from environment for heartbeat signing
+        self._encryption_key: bytes | None = None
+        self._load_encryption_key()
+        
         # Initialize Registry client for secure authentication
         self.registry_client: RegistryClient | None = None
         if config.registry_enabled:
@@ -41,6 +50,27 @@ class CPMonitor:
                 verify_ssl=config.registry_verify_ssl,
                 admin_api_key=config.registry_admin_key
             )
+    
+    def _load_encryption_key(self):
+        """Load encryption key from environment variable for heartbeat signing."""
+        # Convert CP-001 to EV_CP_001_ENCRYPTION_KEY
+        cp_num = self.cp_id.replace("CP-", "").replace("cp-", "")
+        env_var = f"EV_CP_{cp_num}_ENCRYPTION_KEY"
+        
+        key_b64 = os.environ.get(env_var)
+        if key_b64:
+            try:
+                self._encryption_key = base64.b64decode(key_b64)
+                if len(self._encryption_key) == 32:
+                    logger.info(f"CP {self.cp_id}: Loaded encryption key from environment for heartbeat signing")
+                else:
+                    logger.warning(f"CP {self.cp_id}: Invalid key length from {env_var}, heartbeats will be unsigned")
+                    self._encryption_key = None
+            except Exception as e:
+                logger.warning(f"CP {self.cp_id}: Failed to decode key from {env_var}: {e}")
+                self._encryption_key = None
+        else:
+            logger.info(f"CP {self.cp_id}: No encryption key in {env_var}, heartbeats will be unsigned")
     
     async def start(self):
         """Initialize and start the CP Monitor."""
@@ -163,12 +193,21 @@ class CPMonitor:
         """Send heartbeat to Central indicating monitor is alive.
         
         Includes JWT token for authenticated communication.
+        If encryption key is available, signs the heartbeat with HMAC-SHA256.
         """
         central_url = f"http://{self.config.central_host}:{self.config.central_port}"
         heartbeat = {
             "cp_id": self.cp_id,
             "ts": utc_now().isoformat()
         }
+        
+        # Sign heartbeat with encryption key if available
+        if self._encryption_key:
+            # Create message to sign (cp_id + timestamp)
+            message_to_sign = json.dumps({"cp_id": heartbeat["cp_id"], "ts": heartbeat["ts"]}, sort_keys=True)
+            signature = CPEncryptionService.sign_message(message_to_sign, self._encryption_key)
+            heartbeat["signature"] = signature
+            heartbeat["signed_message"] = message_to_sign
         
         # Include authentication token if available
         headers = {}
