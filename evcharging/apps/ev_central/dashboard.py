@@ -1008,7 +1008,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         updateActiveRequests(data.active_requests_details || []);
                         
                         // Update errors section - include system_events with ERROR severity
-                        updateErrors(data.system_errors || [], data.error_summary || {{}}, data.system_events || []);
+                        // Pass charging_points to filter out alerts for CPs that have recovered
+                        updateErrors(data.system_errors || [], data.error_summary || {{}}, data.system_events || [], data.charging_points || []);
                         
                         // Update timestamp
                         document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
@@ -1017,7 +1018,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     }}
                 }}
                 
-                function updateErrors(errors, summary, systemEvents) {{
+                function updateErrors(errors, summary, systemEvents, chargingPoints) {{
                     const container = document.getElementById('errors-list');
                     const section = document.getElementById('errors-section');
                     const summaryEl = document.getElementById('error-summary');
@@ -1025,9 +1026,19 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     
                     if (!container || !section) return;
                     
-                    // Combine errors with ERROR-level system events (like encryption alerts)
+                    // Build a set of CPs that currently have encryption errors
+                    const cpsWithEncryptionError = new Set();
+                    (chargingPoints || []).forEach(cp => {{
+                        if (cp.communication_status === 'ENCRYPTION_ERROR') {{
+                            cpsWithEncryptionError.add(cp.cp_id);
+                        }}
+                    }});
+                    
+                    // Only show security alerts for CPs that STILL have encryption errors
+                    // This ensures alerts disappear when the key is fixed
                     const errorEvents = (systemEvents || [])
                         .filter(e => e.severity === 'ERROR' && e.type === 'SECURITY_ALERT')
+                        .filter(e => cpsWithEncryptionError.has(e.component))  // Only show if CP still has error
                         .slice(0, 5)  // Limit to avoid duplicates
                         .map(e => ({{
                             message: e.message,
