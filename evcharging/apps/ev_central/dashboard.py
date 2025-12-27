@@ -282,6 +282,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
             "active_requests_details": data.get("active_requests_details", []),
             "system_errors": data.get("system_errors", []),
             "error_summary": data.get("error_summary", {}),
+            "system_events": data.get("system_events", []),
         }
     
     @app.get("/errors")
@@ -587,6 +588,31 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 .state-DISCONNECTED {{ background: #9e9e9e; color: white; }}
                 .state-ON {{ background: #4caf50; color: white; }}
                 .state-BROKEN {{ background: #f44336; color: white; }}
+                .state-ENCRYPTION_ERROR {{ 
+                    background: linear-gradient(135deg, #b71c1c 0%, #d32f2f 100%);
+                    color: white;
+                    animation: pulse-error 1.5s ease-in-out infinite;
+                }}
+                @keyframes pulse-error {{
+                    0%, 100% {{ opacity: 1; transform: scale(1); }}
+                    50% {{ opacity: 0.85; transform: scale(1.05); }}
+                }}
+                /* Encryption error card styling */
+                .cp-card.encryption-error {{
+                    border: 3px solid #d32f2f;
+                    box-shadow: 0 0 15px rgba(211, 47, 47, 0.3);
+                    background: linear-gradient(180deg, #fff 0%, #ffebee 100%);
+                }}
+                .encryption-warning {{
+                    background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+                    color: #b71c1c;
+                    padding: 10px 12px;
+                    border-radius: 6px;
+                    font-size: 0.85em;
+                    margin: 10px 0;
+                    border-left: 4px solid #d32f2f;
+                    font-weight: 500;
+                }}
                 @keyframes pulse {{
                     0%, 100% {{ opacity: 1; }}
                     50% {{ opacity: 0.7; }}
@@ -861,7 +887,9 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         
                         data.charging_points.forEach(cp => {{
                             const card = document.createElement('div');
-                            card.className = 'cp-card';
+                            // Add encryption-error class if CP has encryption issue
+                            const isEncryptionError = cp.communication_status === 'ENCRYPTION_ERROR' || cp.state === 'ENCRYPTION_ERROR';
+                            card.className = isEncryptionError ? 'cp-card encryption-error' : 'cp-card';
                             
                             let telemetryRows = '';
                             if (cp.telemetry) {{
@@ -946,11 +974,26 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                                 `<button class="stop-btn" onclick="stopCharging('${{cp.cp_id}}')">Stop Charging</button>`
                                 : '';
                             
+                            // Add encryption error warning if present
+                            const encryptionWarningHtml = isEncryptionError ? `
+                                <div class="encryption-warning">
+                                    🔐 <strong>ENCRYPTION ERROR</strong><br>
+                                    Key mismatch detected. Charging operations BLOCKED.<br>
+                                    Error: ${{cp.encryption_error_type || 'Unknown'}}<br>
+                                    <small>Verify encryption keys are synchronized.</small>
+                                </div>
+                            ` : '';
+                            
+                            // Determine display state for badge
+                            const displayState = isEncryptionError ? 'ENCRYPTION_ERROR' : cp.state;
+                            const displayStateText = isEncryptionError ? '🔐 ENCRYPTION ERROR' : cp.state;
+                            
                             card.innerHTML = `
                                 <div class="cp-header">
                                     <div class="cp-id">${{cp.cp_id}}</div>
-                                    <span class="state-badge state-${{cp.state}}">${{cp.state}}</span>
+                                    <span class="state-badge state-${{displayState}}">${{displayStateText}}</span>
                                 </div>
+                                ${{encryptionWarningHtml}}
                                 ${{weatherHtml}}
                                 ${{driverHtml}}
                                 ${{sessionHtml}}
@@ -964,8 +1007,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         // Update active requests list
                         updateActiveRequests(data.active_requests_details || []);
                         
-                        // Update errors section
-                        updateErrors(data.system_errors || [], data.error_summary || {{}});
+                        // Update errors section - include system_events with ERROR severity
+                        updateErrors(data.system_errors || [], data.error_summary || {{}}, data.system_events || []);
                         
                         // Update timestamp
                         document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
@@ -974,7 +1017,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     }}
                 }}
                 
-                function updateErrors(errors, summary) {{
+                function updateErrors(errors, summary, systemEvents) {{
                     const container = document.getElementById('errors-list');
                     const section = document.getElementById('errors-section');
                     const summaryEl = document.getElementById('error-summary');
@@ -982,7 +1025,31 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     
                     if (!container || !section) return;
                     
-                    const activeErrors = errors.filter(e => !e.resolved);
+                    // Combine errors with ERROR-level system events (like encryption alerts)
+                    const errorEvents = (systemEvents || [])
+                        .filter(e => e.severity === 'ERROR' && e.type === 'SECURITY_ALERT')
+                        .slice(0, 5)  // Limit to avoid duplicates
+                        .map(e => ({{
+                            message: e.message,
+                            severity: 'CRITICAL',  // Promote security alerts to CRITICAL
+                            source: 'SECURITY',
+                            target: e.component,
+                            timestamp: e.timestamp,
+                            category: 'ENCRYPTION',
+                            technical_detail: `Security event type: ${{e.type}}`,
+                            resolved: false
+                        }}));
+                    
+                    // Deduplicate by component - only show one alert per CP
+                    const seenComponents = new Set();
+                    const uniqueErrorEvents = errorEvents.filter(e => {{
+                        if (seenComponents.has(e.target)) return false;
+                        seenComponents.add(e.target);
+                        return true;
+                    }});
+                    
+                    const allErrors = [...(errors || []), ...uniqueErrorEvents];
+                    const activeErrors = allErrors.filter(e => !e.resolved);
                     errorCountEl.textContent = activeErrors.length;
                     
                     if (activeErrors.length === 0) {{
@@ -997,10 +1064,12 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     
                     // Update summary
                     let summaryHtml = '';
-                    if (summary.by_severity) {{
-                        for (const [severity, count] of Object.entries(summary.by_severity)) {{
-                            summaryHtml += `<div class="error-stat">${{severity}}: <span>${{count}}</span></div>`;
-                        }}
+                    const bySeverity = {{}};
+                    activeErrors.forEach(e => {{
+                        bySeverity[e.severity] = (bySeverity[e.severity] || 0) + 1;
+                    }});
+                    for (const [severity, count] of Object.entries(bySeverity)) {{
+                        summaryHtml += `<div class="error-stat">${{severity}}: <span>${{count}}</span></div>`;
                     }}
                     summaryEl.innerHTML = summaryHtml;
                     
@@ -1010,10 +1079,11 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                         const badgeClass = err.severity === 'CRITICAL' ? 'critical' : 
                                           err.severity === 'ERROR' ? 'error' :
                                           err.severity === 'WARNING' ? 'warning' : 'info';
+                        const icon = err.category === 'ENCRYPTION' ? '🔐' : '⚠️';
                         return `
                             <div class="error-item ${{severityClass}}">
                                 <div class="error-content">
-                                    <div class="error-message">⚠️ ${{err.message}}</div>
+                                    <div class="error-message">${{icon}} ${{err.message}}</div>
                                     ${{err.technical_detail ? `<div class="error-detail">${{err.technical_detail}}</div>` : ''}}
                                     <div class="error-meta">
                                         <span class="error-badge ${{badgeClass}}">${{err.severity}}</span>

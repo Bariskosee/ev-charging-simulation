@@ -120,6 +120,10 @@ class ChargingPoint:
         if self.security_status != CPSecurityStatus.ACTIVE:
             return False
         
+        # CRITICAL: Block CPs with encryption errors - cannot communicate securely
+        if self.communication_status == "ENCRYPTION_ERROR":
+            return False
+        
         return can_supply(self.state) and self.current_driver is None and not self.is_faulty
     
     def is_security_authorized(self) -> bool:
@@ -127,7 +131,8 @@ class ChargingPoint:
         return (
             self.is_authenticated and 
             self.security_status == CPSecurityStatus.ACTIVE and
-            self.has_encryption_key
+            self.has_encryption_key and
+            self.communication_status != "ENCRYPTION_ERROR"  # Must have working encryption
         )
 
     def record_monitor_heartbeat(self):
@@ -799,11 +804,26 @@ class EVCentralController:
         
         cp = self.charging_points[request.cp_id]
         
+        # CRITICAL: Check for encryption communication failure FIRST
+        # This is a security requirement - CPs with key mismatches cannot be used
+        if cp.communication_status == "ENCRYPTION_ERROR":
+            logger.error(
+                f"Driver request DENIED: CP {request.cp_id} has encryption communication failure. "
+                f"Error: {cp.encryption_error_type} - {cp.encryption_error}"
+            )
+            await self._send_driver_update(
+                request,
+                MessageStatus.DENIED,
+                f"Charging point has encryption error - secure communication unavailable"
+            )
+            return
+        
         # Security check: Verify CP is authorized
         if not cp.is_security_authorized():
             logger.warning(
                 f"Driver request denied: CP {request.cp_id} not authorized "
-                f"(auth={cp.is_authenticated}, status={cp.security_status.value})"
+                f"(auth={cp.is_authenticated}, status={cp.security_status.value}, "
+                f"comm_status={cp.communication_status})"
             )
             await self._send_driver_update(
                 request,
@@ -1138,15 +1158,44 @@ class EVCentralController:
         if error:
             # Record error on CP for interface display
             if cp_id in self.charging_points:
-                self.charging_points[cp_id].set_encryption_error(
+                cp = self.charging_points[cp_id]
+                # Only log system event if this is a NEW error (not already in error state)
+                was_in_error = cp.communication_status == "ENCRYPTION_ERROR"
+                
+                cp.set_encryption_error(
                     error.error_type.value,
                     error.message
                 )
+                
+                # Add system event for dashboard visibility (only on first error)
+                if not was_in_error:
+                    self._add_system_event(
+                        "ENCRYPTION_FAILURE",
+                        cp_id,
+                        f"🔐 ENCRYPTION ERROR: CP {cp_id} communication failure - "
+                        f"{error.error_type.value}. Charging operations BLOCKED. "
+                        f"Verify encryption keys are synchronized.",
+                        "ERROR"
+                    )
             return None, cp_id
         
         # Clear any previous error (recovery)
         if cp_id in self.charging_points:
-            self.charging_points[cp_id].clear_encryption_error()
+            cp = self.charging_points[cp_id]
+            # Only log recovery if we were in error state
+            was_in_error = cp.communication_status == "ENCRYPTION_ERROR"
+            
+            cp.clear_encryption_error()
+            
+            # Add system event for recovery
+            if was_in_error:
+                self._add_system_event(
+                    "ENCRYPTION_RECOVERY",
+                    cp_id,
+                    f"✅ ENCRYPTION RESTORED: CP {cp_id} secure communication recovered. "
+                    f"Charging operations resumed.",
+                    "SUCCESS"
+                )
         
         return decrypted, cp_id
     
