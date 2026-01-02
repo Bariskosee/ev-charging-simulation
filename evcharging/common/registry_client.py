@@ -128,6 +128,7 @@ class RegistryClient:
                     
                     logger.error(
                         f"Registration failed: {response.status_code} - {error_detail}"
+                        f"The key that doesnt work looks like this: {self.admin_api_key}"
                     )
                     return False
         

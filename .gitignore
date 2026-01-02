@@ -43,7 +43,6 @@ htmlcov/
 # Environment
 .env
 .env.local
-.env.example
 
 # Logs
 *.log
@@ -58,3 +57,5 @@ docker-compose.override.yml
 
 # Kafka data
 kafka-data/
+
+certs/

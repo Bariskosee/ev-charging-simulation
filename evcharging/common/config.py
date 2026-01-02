@@ -70,7 +70,7 @@ class CPMonitorConfig(BaseSettings):
         default=True,
         description="Verify SSL certificates when connecting to Registry"
     )
-    registry_admin_key: Optional[str] = Field(
+    registry_admin_api_key: Optional[str] = Field(
         default=None,
         description="Admin API key for new CP registration"
     )

@@ -48,7 +48,7 @@ class CPMonitor:
             self.registry_client = RegistryClient(
                 registry_url=config.registry_url,
                 verify_ssl=config.registry_verify_ssl,
-                admin_api_key=config.registry_admin_key
+                admin_api_key=config.registry_admin_api_key
             )
     
     def _load_encryption_key(self):
@@ -96,8 +96,8 @@ class CPMonitor:
         }
         
         max_retries = 5
-        retry_delay = 2.0
-        
+        retry_delay = 2.0        
+
         for attempt in range(1, max_retries + 1):
             success = await self.registry_client.register(
                 cp_id=self.cp_id,
@@ -400,7 +400,7 @@ async def main():
     # Registry settings
     parser.add_argument("--registry-url", type=str, help="EV_Registry API URL")
     parser.add_argument("--registry-enabled", type=bool, default=None, help="Enable Registry authentication")
-    parser.add_argument("--registry-admin-key", type=str, help="Admin API key for new registrations")
+    parser.add_argument("--registry-admin-api-key", type=str, help="Admin API key for new registrations")
     parser.add_argument("--no-registry", action="store_true", help="Disable Registry authentication (insecure)")
     
     args = parser.parse_args()

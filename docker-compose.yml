@@ -83,6 +83,11 @@ services:
       EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
       # Enable Kafka message encryption (set to "true" in production)
       EV_KAFKA_ENCRYPTION: ${EV_KAFKA_ENCRYPTION:-false}
+      EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
+      EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
+      EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
+      EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
+      EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_healthy
@@ -132,8 +137,8 @@ services:
     volumes:
       - registry-data:/data
       # Mount certificates if TLS is enabled
-      # - ./certs/registry-cert.pem:/certs/cert.pem:ro
-      # - ./certs/registry-key.pem:/certs/key.pem:ro
+      - ./certs/cert.pem:/certs/cert.pem:ro
+      - ./certs/key.pem:/certs/key.pem:ro
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -242,6 +247,7 @@ services:
       CP_ENGINE_KW_RATE: 43.0
       CP_ENGINE_EURO_RATE: 0.32
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -262,6 +268,7 @@ services:
       CP_ENGINE_KW_RATE: 150.0
       CP_ENGINE_EURO_RATE: 0.40
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -282,106 +289,7 @@ services:
       CP_ENGINE_KW_RATE: 7.2
       CP_ENGINE_EURO_RATE: 0.28
       CP_ENGINE_TELEMETRY_INTERVAL: 1.0
-    depends_on:
-      kafka:
-        condition: service_started
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-e-6:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_e
-    container_name: ev-cp-e-6
-    environment:
-      CP_ENGINE_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
-      CP_ENGINE_CP_ID: CP-006
-      CP_ENGINE_HEALTH_PORT: 8006
-      CP_ENGINE_LOG_LEVEL: INFO
-      CP_ENGINE_KW_RATE: 11.0
-      CP_ENGINE_EURO_RATE: 0.29
-      CP_ENGINE_TELEMETRY_INTERVAL: 1.0
-    depends_on:
-      kafka:
-        condition: service_started
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-e-7:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_e
-    container_name: ev-cp-e-7
-    environment:
-      CP_ENGINE_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
-      CP_ENGINE_CP_ID: CP-007
-      CP_ENGINE_HEALTH_PORT: 8007
-      CP_ENGINE_LOG_LEVEL: INFO
-      CP_ENGINE_KW_RATE: 100.0
-      CP_ENGINE_EURO_RATE: 0.38
-      CP_ENGINE_TELEMETRY_INTERVAL: 1.0
-    depends_on:
-      kafka:
-        condition: service_started
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-e-8:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_e
-    container_name: ev-cp-e-8
-    environment:
-      CP_ENGINE_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
-      CP_ENGINE_CP_ID: CP-008
-      CP_ENGINE_HEALTH_PORT: 8008
-      CP_ENGINE_LOG_LEVEL: INFO
-      CP_ENGINE_KW_RATE: 22.0
-      CP_ENGINE_EURO_RATE: 0.31
-      CP_ENGINE_TELEMETRY_INTERVAL: 1.0
-    depends_on:
-      kafka:
-        condition: service_started
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-e-9:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_e
-    container_name: ev-cp-e-9
-    environment:
-      CP_ENGINE_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
-      CP_ENGINE_CP_ID: CP-009
-      CP_ENGINE_HEALTH_PORT: 8009
-      CP_ENGINE_LOG_LEVEL: INFO
-      CP_ENGINE_KW_RATE: 75.0
-      CP_ENGINE_EURO_RATE: 0.36
-      CP_ENGINE_TELEMETRY_INTERVAL: 1.0
-    depends_on:
-      kafka:
-        condition: service_started
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-e-10:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_e
-    container_name: ev-cp-e-10
-    environment:
-      CP_ENGINE_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
-      CP_ENGINE_CP_ID: CP-010
-      CP_ENGINE_HEALTH_PORT: 8010
-      CP_ENGINE_LOG_LEVEL: INFO
-      CP_ENGINE_KW_RATE: 350.0
-      CP_ENGINE_EURO_RATE: 0.45
-      CP_ENGINE_TELEMETRY_INTERVAL: 1.0
+      EV_CP_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       kafka:
         condition: service_started
@@ -404,6 +312,9 @@ services:
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
+      EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-1
@@ -424,6 +335,9 @@ services:
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
+      EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-2
@@ -444,6 +358,9 @@ services:
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
+      EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-3
@@ -464,6 +381,9 @@ services:
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
+      EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-4
@@ -484,109 +404,12 @@ services:
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
+      EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-5
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-m-6:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_m
-    container_name: ev-cp-m-6
-    environment:
-      CP_MONITOR_CP_ID: CP-006
-      CP_MONITOR_CP_E_HOST: ev-cp-e-6
-      CP_MONITOR_CP_E_PORT: 8006
-      CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
-      CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
-      CP_MONITOR_HEALTH_INTERVAL: 2.0
-      CP_MONITOR_LOG_LEVEL: INFO
-    depends_on:
-      - ev-central
-      - ev-cp-e-6
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-m-7:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_m
-    container_name: ev-cp-m-7
-    environment:
-      CP_MONITOR_CP_ID: CP-007
-      CP_MONITOR_CP_E_HOST: ev-cp-e-7
-      CP_MONITOR_CP_E_PORT: 8007
-      CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
-      CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
-      CP_MONITOR_HEALTH_INTERVAL: 2.0
-      CP_MONITOR_LOG_LEVEL: INFO
-    depends_on:
-      - ev-central
-      - ev-cp-e-7
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-m-8:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_m
-    container_name: ev-cp-m-8
-    environment:
-      CP_MONITOR_CP_ID: CP-008
-      CP_MONITOR_CP_E_HOST: ev-cp-e-8
-      CP_MONITOR_CP_E_PORT: 8008
-      CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
-      CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
-      CP_MONITOR_HEALTH_INTERVAL: 2.0
-      CP_MONITOR_LOG_LEVEL: INFO
-    depends_on:
-      - ev-central
-      - ev-cp-e-8
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-m-9:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_m
-    container_name: ev-cp-m-9
-    environment:
-      CP_MONITOR_CP_ID: CP-009
-      CP_MONITOR_CP_E_HOST: ev-cp-e-9
-      CP_MONITOR_CP_E_PORT: 8009
-      CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
-      CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
-      CP_MONITOR_HEALTH_INTERVAL: 2.0
-      CP_MONITOR_LOG_LEVEL: INFO
-    depends_on:
-      - ev-central
-      - ev-cp-e-9
-    networks:
-      - evcharging-network
-    restart: unless-stopped
-
-  ev-cp-m-10:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cp_m
-    container_name: ev-cp-m-10
-    environment:
-      CP_MONITOR_CP_ID: CP-010
-      CP_MONITOR_CP_E_HOST: ev-cp-e-10
-      CP_MONITOR_CP_E_PORT: 8010
-      CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
-      CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
-      CP_MONITOR_HEALTH_INTERVAL: 2.0
-      CP_MONITOR_LOG_LEVEL: INFO
-    depends_on:
-      - ev-central
-      - ev-cp-e-10
     networks:
       - evcharging-network
     restart: unless-stopped
