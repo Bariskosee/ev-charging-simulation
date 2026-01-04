@@ -117,7 +117,7 @@ class LocationManager:
                 with open(filepath, 'r') as f:
                     count = 0
                     for line in f:
-                        city = line.strip()
+                        city = line.strip(",")[1]
                         if city and not city.startswith('#'):
                             self._locations.add(city)
                             count += 1

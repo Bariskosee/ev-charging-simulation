@@ -6,6 +6,7 @@ Main entry point for the weather monitoring module.
 import asyncio
 import signal
 import sys
+import httpx
 import uvicorn
 from loguru import logger
 from dotenv import load_dotenv
@@ -29,6 +30,8 @@ class EVWeatherController:
         self._shutdown_event = asyncio.Event()
         self.dashboard_app = None
         self.dashboard_server = None
+        self.weather_dict = {}
+        self.client = httpx.AsyncClient(timeout=4.0)
     
     async def initialize(self) -> bool:
         """
@@ -61,7 +64,7 @@ class EVWeatherController:
     def _request_shutdown(self):
         """Request shutdown from menu."""
         self._shutdown_event.set()
-    
+
     async def run(self):
         """Run the weather monitoring service."""
         # Load default locations if available

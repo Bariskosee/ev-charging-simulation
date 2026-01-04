@@ -177,10 +177,10 @@ class WeatherMenu:
         """Load locations from a file."""
         print("\n📂 Load Locations from File")
         print("-"*40)
-        filename = input("Enter filename (default: locations.txt): ").strip()
+        filename = input("Enter filename (default: CP_cities.txt): ").strip()
         
         if not filename:
-            filename = "locations.txt"
+            filename = "/app/evcharging/common/CP_cities.txt"
         
         count = self.location_manager.load_from_file(filename)
         if count > 0:

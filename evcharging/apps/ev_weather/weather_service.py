@@ -5,6 +5,7 @@ Polls OpenWeather API and provides temperature data for charging stations.
 
 import asyncio
 import aiohttp
+import httpx
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from loguru import logger
@@ -102,11 +103,17 @@ class WeatherService:
                 
                 # Track failures for this poll cycle
                 poll_failures = 0
-                
+                temp_data = {}
+
+                print(f"Results look like this: {results}")
+
                 # Update latest data
                 for result in results:
                     if isinstance(result, WeatherData):
+                        print("We have entered the result assigning part")
+                        temp_data[result.city] = self.latest_data.get(result.city)
                         self.latest_data[result.city] = result
+                        print(f"dictionary: {self.latest_data[result.city]} for the city {result.city}")
                         # Use debug level for routine weather updates to avoid flooding menu
                         logger.debug(f"🌡️  {result}")
                     elif isinstance(result, Exception):
@@ -136,6 +143,8 @@ class WeatherService:
                             resolution_message="OpenWeather API connection restored"
                         )
                     self._consecutive_api_failures = 0
+                
+                await self.central_notifications(temp_data)
                 
                 # Remove data for locations no longer monitored
                 current_cities = set(locations)
@@ -199,6 +208,7 @@ class WeatherService:
                     category=ErrorCategory.SERVICE,
                     resolution_message=f"Weather data for {city} successfully retrieved"
                 )
+
                 return self._parse_weather_data(city, data)
                 
         except aiohttp.ClientConnectorError as e:
@@ -287,3 +297,37 @@ class WeatherService:
             Dictionary with severity counts
         """
         return self.error_manager.get_error_summary()
+    
+    async def central_notifications(self, temp_data: dict):
+        for city in self.latest_data.keys():
+            if (self.latest_data[city].temperature <= 0 
+                    and (temp_data[city] is None or temp_data[city].temperature > 0)):
+                try:
+                    print("Notifing the central about negative temperature")
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            f"{self.config.central_url}/weather/alert",
+                            params={
+                                "city": city, 
+                                "temp": self.latest_data[city].temperature
+                            },
+                            timeout=5.0
+                        ) 
+                except Exception as e:
+                    logger.error(f"Could not send alert notification to the Central on address: "
+                                 f"{self.config.central_url}:{self.config.central_port}")
+            elif (self.latest_data[city].temperature > 0 and temp_data[city] is not None
+                    and temp_data[city].temperature <= 0):
+                try:
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            f"{self.config.central_url}/weather/cancel_alert",
+                            params={
+                                "city": city, 
+                                "temp": self.latest_data[city].temperature
+                            },
+                            timeout=5.0
+                        ) 
+                except Exception as e:
+                    logger.error(f"Could not send alert cancellation notification to the Central on address: "
+                                 f"{self.config.central_url}:{self.config.central_port}")

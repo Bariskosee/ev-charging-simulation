@@ -268,7 +268,7 @@ def create_weather_dashboard(controller: "EVWeatherController") -> FastAPI:
                                 "feels_like": data.feels_like,
                                 "humidity": data.humidity,
                                 "wind_speed": data.wind_speed
-                            }
+                            }                            
                     except Exception as city_error:
                         logger.debug(f"Error getting weather for {city}: {city_error}")
                         # Continue to next city, don't fail the whole request

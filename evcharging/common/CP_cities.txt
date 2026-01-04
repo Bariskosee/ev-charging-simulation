@@ -1,10 +1,10 @@
 CP-001,Istanbul
 CP-002,Ankara
-CP-003,Izmir
+CP-003,Poznan
 CP-004,Trabzon
 CP-005,Madrid
 CP-006,Ankara
-CP-007,Zakopane
+CP-007,Izmir
 CP-008,Warszawa
 CP-009,Antalya
 CP-010,Paris

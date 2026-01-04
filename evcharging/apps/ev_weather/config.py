@@ -26,8 +26,9 @@ class WeatherConfig:
         self.polling_interval: int = 4  # seconds
         self.temperature_unit: str = "metric"  # celsius
         self.default_cities: List[str] = []  # Cities to monitor by default
-        self.locations_file: str = "locations.txt"  # File to store/load locations
+        self.locations_file: str = "/app/evcharging/common/CP_cities.txt" # File to store/load locations
         self.dashboard_port: int = 8003  # HTTP dashboard port
+        self.central_url: str = "http://localhost:8000"
         
     def load(self) -> bool:
         """
@@ -86,6 +87,8 @@ class WeatherConfig:
                             self.polling_interval = int(value)
                         elif key == 'WEATHER_TEMPERATURE_UNIT':
                             self.temperature_unit = value
+                        elif key == 'WEATHER_CENTRAL_HTTP_URL':
+                            self.central_url = value
             
             return self.api_key is not None
         except Exception as e:
@@ -101,6 +104,9 @@ class WeatherConfig:
         
         if unit := os.getenv('WEATHER_TEMPERATURE_UNIT'):
             self.temperature_unit = unit
+        
+        if url := os.getenv('WEATHER_CENTRAL_HTTP_URL'):
+            self.central_url = url
         
         return self.api_key is not None
     
@@ -118,8 +124,9 @@ class WeatherConfig:
             self.api_key = weather_config.get('api_key')
             self.polling_interval = weather_config.get('polling_interval', 4)
             self.temperature_unit = weather_config.get('temperature_unit', 'metric')
-            self.locations_file = weather_config.get('locations_file', 'locations.txt')
+            self.locations_file = weather_config.get('locations_file', '/app/evcharging/common/CP_cities.txt')
             self.dashboard_port = weather_config.get('dashboard_port', 8003)
+            self.central_url = weather_config.get('central_url')
             
             # Read default cities from locations section
             locations_config = data.get('locations', {})
@@ -143,7 +150,7 @@ class WeatherConfig:
             # Load weather-specific settings if not already set from env
             weather_config = data.get('weather', {})
             if 'locations_file' in weather_config:
-                self.locations_file = weather_config.get('locations_file', 'locations.txt')
+                self.locations_file = weather_config.get('locations_file', '/app/evcharging/common/CP_cities.txt')
             if 'dashboard_port' in weather_config:
                 self.dashboard_port = weather_config.get('dashboard_port', 8003)
             
@@ -190,5 +197,7 @@ class WeatherConfig:
             'temperature_unit': self.temperature_unit,
             'default_cities': self.default_cities,
             'locations_file': self.locations_file,
-            'dashboard_port': self.dashboard_port
+            'dashboard_port': self.dashboard_port,
+            'central_url': self.central_url,
+            'central_port': self.central_port
         }

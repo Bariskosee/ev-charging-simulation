@@ -424,54 +424,30 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
             "state": cp.city,
         }
 
-    @app.post("/weather/report")
-    async def receive_weather_report(data: WeatherReport):
-        """Receives general weather information about a given city"""
-        city = data.city
-        temperature = data.temperature
-        alert = data.alert
-        weather_status = {}
-        
-        weather_status.append({
-                    "city": city,
-                    "temperature": temperature,
-                    "alert": alert,
-                })
-        
-        controller.weather_by_city[city] = weather_status
-
-        return {"success": True, "city": city}
-
     @app.post("/weather/alert")
-    async def receive_alert(data: WeatherReport):
+    async def receive_alert(city: str, temp: float):
         """Receives alert notification about a given city and sends 
         the fault notification to each CP in the alerted city"""
-        city = data.city
-        temperature = data.temperature
-        alert = data.alert
         
         for cp in controller.charging_points.values():
-            if cp.city == data.city and not cp.is_faulty:
+            if cp.city == city and not cp.is_faulty:
                 await controller.mark_cp_faulty(
                     cp.cp_id,
-                    reason=f"Weather alert in {data.city}"
+                    reason=f"Weather alert in {city}"
                 )
         
-        return {"success": True, "city": city, "tempearature": temperature, "alert": alert}
+        return {"success": True, "city": city, "tempearature": temp}
 
     @app.post("/weather/cancel_alert")
-    async def receive_alert_cancel(data: WeatherReport):
+    async def receive_alert_cancel(city: str, temp: float):
         """Receives alert cancellation and clear the fault in the CPs 
         in the given city"""
-        city = data.city
-        temperature = data.temperature
-        alert = data.alert
 
         for cp in controller.charging_points.values():
-            if cp.city == data.city and cp.is_faulty and cp.fault_reason == f"Weather alert in {data.city}":
+            if cp.city == city and cp.is_faulty and cp.fault_reason == f"Weather alert in {city}":
                 await controller.clear_cp_fault(cp.cp_id)
         
-        return {"success": True, "city": city, "temperature": temperature, "alert": alert}
+        return {"success": True, "city": city, "temperature": temp}
     
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):
@@ -827,7 +803,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 // Fetch weather data - fault tolerant, never throws
                 let weatherCache = {{}};
                 let lastWeatherFetch = 0;
-                const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
+                const WEATHER_FETCH_INTERVAL = 4000; // 4 seconds
                 
                 async function updateWeather() {{
                     try {{
