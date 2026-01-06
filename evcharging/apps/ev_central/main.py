@@ -161,6 +161,8 @@ class ChargingPoint:
         """Calculate display state combining monitor and engine state."""
         if self.monitor_status == ChargingPoint.MonitorStatus.DOWN:
             return "DISCONNECTED"
+        if self.is_faulty and self.state == CPState.STOPPED:
+            return "TURNED_OFF_WEATHER"
         if self.is_faulty:
             return "BROKEN"
         if self.engine_status_known and self.state in {CPState.FAULT, CPState.DISCONNECTED}:
@@ -598,7 +600,10 @@ class EVCentralController:
         cp.record_monitor_heartbeat()
         
         # Update engine state to reflect fault condition
-        cp.state = CPState.FAULT
+        if (reason.startswith("Weather")):
+            cp.state = CPState.STOPPED
+        else:
+            cp.state = CPState.FAULT
         cp.engine_status_known = False  # Engine status unknown until it recovers
         cp.last_update = utc_now()
         

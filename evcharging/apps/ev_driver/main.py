@@ -512,6 +512,8 @@ class EVDriver:
         if display_state == "ENCRYPTION_ERROR" or communication_status == "ENCRYPTION_ERROR":
             return "ENCRYPTION_ERROR"
         
+        if display_state == "TURNED_OFF_WEATHER":
+            return "OFFLINE"
         if display_state == "DISCONNECTED":
             return "OFFLINE"
         if display_state == "BROKEN":

@@ -559,7 +559,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                 }}
                 .state-ACTIVATED {{ background: #4caf50; color: white; }}
                 .state-SUPPLYING {{ background: #2196f3; color: white; animation: pulse 2s infinite; }}
-                .state-STOPPED {{ background: #ff9800; color: white; }}
+                .state-STOPPED {{ background: #F57F31; color: white; }}
+                .state-TURNED_OFF_WEATHER {{ background: #F57F31; color: white; }}
                 .state-FAULT {{ background: #f44336; color: white; }}
                 .state-DISCONNECTED {{ background: #9e9e9e; color: white; }}
                 .state-ON {{ background: #4caf50; color: white; }}
@@ -675,7 +676,8 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                     font-weight: bold;
                     color: #f44336;
                 }}
-                .state-STOPPED {{ background: #ff9800; color: white; }}
+                .state-STOPPED {{ background: #F57F31; color: white; }}
+                .state-TURNED_OFF_WEATHER {{ background: #F57F31; color: white; }}
                 .state-FAULT {{ background: #f44336; color: white; }}
                 .state-DISCONNECTED {{ background: #9e9e9e; color: white; }}
                 .state-ON {{ background: #4caf50; color: white; }}
@@ -910,7 +912,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
                             }} else if (cp.city && weatherCache[cp.city] && typeof weatherCache[cp.city].temperature === 'number') {{
                                 // Then check weather cache
                                 const w = weatherCache[cp.city];
-                                const tempAlert = w.temperature > 35 || w.temperature < 0;
+                                const tempAlert = w.temperature <= 0;
                                 const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
                                 weatherHtml = `
                                     <div class="weather ${{cssClass}}">

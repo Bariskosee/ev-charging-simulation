@@ -966,7 +966,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                 let activeSession = null;
                 let weatherCache = {{}};
                 let lastWeatherFetch = 0;
-                const WEATHER_FETCH_INTERVAL = 10000; // 10 seconds
+                const WEATHER_FETCH_INTERVAL = 4000; // 4 seconds
                 
                 function showNotification(message, type = 'info') {{
                     try {{
@@ -1168,7 +1168,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
                             ${{(() => {{
                                 if (cp.location.city && weatherCache[cp.location.city] && typeof weatherCache[cp.location.city].temperature === 'number') {{
                                     const w = weatherCache[cp.location.city];
-                                    const tempAlert = w.temperature > 35 || w.temperature < 0;
+                                    const tempAlert = w.temperature <= 0;
                                     const cssClass = tempAlert ? 'weather-alert' : 'weather-ok';
                                     return `<div class="weather ${{cssClass}}">🌡️ ${{cp.location.city}}: ${{w.temperature.toFixed(1)}}°C - ${{w.description || 'N/A'}}</div>`;
                                 }} else if (cp.location.city) {{
