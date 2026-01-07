@@ -88,6 +88,8 @@ services:
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
+    volumes:
+      - data:/data
     depends_on:
       kafka:
         condition: service_healthy
@@ -117,7 +119,7 @@ services:
       - "8080:8080"  # REST API
     environment:
       REGISTRY_API_PORT: 8080
-      REGISTRY_DB_PATH: /data/ev_registry.db
+      REGISTRY_DB_PATH: /data/ev_charging.db
       REGISTRY_LOG_LEVEL: INFO
       REGISTRY_TOKEN_EXPIRATION_HOURS: 24
       # SECURITY: Must set strong secret key via environment variable
@@ -135,7 +137,7 @@ services:
       # Admin API Key for re-registration (optional but recommended)
       REGISTRY_ADMIN_API_KEY: "${REGISTRY_ADMIN_API_KEY:-}"
     volumes:
-      - registry-data:/data
+      - data:/data
       # Mount certificates if TLS is enabled
       - ./certs/cert.pem:/certs/cert.pem:ro
       - ./certs/key.pem:/certs/key.pem:ro
@@ -552,4 +554,4 @@ networks:
 
 volumes:
   kafka-data:
-  registry-data:
+  data:

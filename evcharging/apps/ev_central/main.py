@@ -191,8 +191,8 @@ class EVCentralController:
         self.weather_by_city: dict[str, dict] = {}
         
         # Security components
-        self.security_db = CPSecurityDB(config.db_url or "ev_charging.db")
-        self.registry_db = CPRegistryDB(config.db_url or "ev_charging.db")
+        self.security_db = CPSecurityDB(config.db_url or "/data/ev_charging.db")
+        self.registry_db = CPRegistryDB(config.db_url or "/data/ev_charging.db")
         
         # Initialize security manager with secret key from environment
         # MUST match REGISTRY_SECRET_KEY for token validation to work

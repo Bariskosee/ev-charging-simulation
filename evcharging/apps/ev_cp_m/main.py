@@ -206,6 +206,7 @@ class CPMonitor:
             # Create message to sign (cp_id + timestamp)
             message_to_sign = json.dumps({"cp_id": heartbeat["cp_id"], "ts": heartbeat["ts"]}, sort_keys=True)
             signature = CPEncryptionService.sign_message(message_to_sign, self._encryption_key)
+            logger.info(f"Signature: {signature}")
             heartbeat["signature"] = signature
             heartbeat["signed_message"] = message_to_sign
         
