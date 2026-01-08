@@ -449,6 +449,7 @@ def create_dashboard_app(controller: "EVCentralController") -> FastAPI:
         
         return {"success": True, "city": city, "temperature": temp}
     
+    
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):
         """Main dashboard HTML page."""

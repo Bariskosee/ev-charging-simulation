@@ -62,7 +62,7 @@ class EVDriver:
         self._poll_task: Optional[asyncio.Task] = None
         self._dashboard_task: Optional[asyncio.Task] = None
         self._running = False
-        self.central_http_url = config.central_http_url.rstrip("/")
+        self.central_https_url = config.central_https_url.rstrip("/")
         self.dashboard_port = config.dashboard_port
         self.ticket_file = f"driver_tickets/driver_{self.driver_id}_tickets.txt"
         
@@ -324,10 +324,10 @@ class EVDriver:
         continue via Kafka even if Central's HTTP API is unavailable.
         """
         logger.info("Driver: starting central polling loop")
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
             while self._running:
                 try:
-                    resp = await client.get(f"{self.central_http_url}/cp")
+                    resp = await client.get(f"{self.central_https_url}/cp")
                     resp.raise_for_status()
                     payload = resp.json()
                     await self._update_charging_points(payload.get("charging_points", []))
@@ -728,9 +728,9 @@ class EVDriver:
                     
                     # Send stop request to Central via HTTP
                     try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
+                        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                             response = await client.post(
-                                f"{self.central_http_url}/stop-session",
+                                f"{self.central_https_url}/stop-session",
                                 json={
                                     "cp_id": summary.cp_id,
                                     "driver_id": self.driver_id,

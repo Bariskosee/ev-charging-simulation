@@ -78,6 +78,7 @@ services:
       CENTRAL_KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
       CENTRAL_HTTP_PORT: 8000
       CENTRAL_LISTEN_PORT: 9999
+      CENTRAL_SECURITY_PORT: 9000
       CENTRAL_LOG_LEVEL: INFO
       EV_SECURITY_SECRET: ${EV_SECURITY_SECRET}
       EV_KEY_ENCRYPTION_SECRET: ${EV_KEY_ENCRYPTION_SECRET:-lab-env-key-encryption-secret-min32chars}
@@ -90,6 +91,7 @@ services:
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     volumes:
       - data:/data
+      - ./certs:/certs:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -97,7 +99,7 @@ services:
       - evcharging-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"https://localhost:8000/health\")'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -139,8 +141,8 @@ services:
     volumes:
       - data:/data
       # Mount certificates if TLS is enabled
-      - ./certs/cert.pem:/certs/cert.pem:ro
-      - ./certs/key.pem:/certs/key.pem:ro
+      - ./certs:/certs:ro
+      - ./certs:/certs:ro
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -150,7 +152,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      test: ["CMD-SHELL", "curl -f https://localhost:8080/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -167,7 +169,7 @@ services:
       - "8003:8003"  # Weather API endpoint
     environment:
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
-      WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       WEATHER_POLL_INTERVAL: ${WEATHER_POLLING_INTERVAL:-4}
       WEATHER_CITY_FILE: ${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
       WEATHER_LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -310,16 +312,19 @@ services:
       CP_MONITOR_CP_ID: CP-001
       CP_MONITOR_CP_E_HOST: ev-cp-e-1
       CP_MONITOR_CP_E_PORT: 8001
+      CP_MONITOR_CP_API_PORT: 9001
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
-      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-1
+    ports:
+      - "9001:9001"
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -333,16 +338,19 @@ services:
       CP_MONITOR_CP_ID: CP-002
       CP_MONITOR_CP_E_HOST: ev-cp-e-2
       CP_MONITOR_CP_E_PORT: 8002
+      CP_MONITOR_CP_API_PORT: 9002
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
-      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-2
+    ports:
+      - "9002:9002"
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -356,16 +364,19 @@ services:
       CP_MONITOR_CP_ID: CP-003
       CP_MONITOR_CP_E_HOST: ev-cp-e-3
       CP_MONITOR_CP_E_PORT: 8003
+      CP_MONITOR_CP_API_PORT: 9003
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
-      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-3
+    ports:
+      - "9003:9003"
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -379,16 +390,19 @@ services:
       CP_MONITOR_CP_ID: CP-004
       CP_MONITOR_CP_E_HOST: ev-cp-e-4
       CP_MONITOR_CP_E_PORT: 8004
+      CP_MONITOR_CP_API_PORT: 9004
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
-      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-4
+    ports:
+      - "9004:9004"
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -402,16 +416,19 @@ services:
       CP_MONITOR_CP_ID: CP-005
       CP_MONITOR_CP_E_HOST: ev-cp-e-5
       CP_MONITOR_CP_E_PORT: 8005
+      CP_MONITOR_CP_API_PORT: 9005
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
       CP_MONITOR_LOG_LEVEL: INFO
-      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-http://ev-registry:8080}
+      CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     depends_on:
       - ev-central
       - ev-cp-e-5
+    ports:
+      - "9005:9005"
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -429,7 +446,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 120.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8100
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -455,7 +472,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 60.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8101
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -481,7 +498,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 30.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8102
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -507,7 +524,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 15.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8103
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -533,7 +550,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 10.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8104
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-http://ev-central:8000}
+      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -555,3 +572,5 @@ networks:
 volumes:
   kafka-data:
   data:
+  certs:
+

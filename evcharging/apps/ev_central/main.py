@@ -40,6 +40,7 @@ from evcharging.common.encrypted_kafka import (
 )
 
 from evcharging.apps.ev_central.dashboard import create_dashboard_app
+from evcharging.apps.ev_central.security_api import create_security_api
 from evcharging.apps.ev_central.tcp_server import TCPControlServer
 from evcharging.common.error_manager import (
     ErrorManager, ErrorCategory, ErrorSeverity, ErrorSource,
@@ -235,7 +236,7 @@ class EVCentralController:
         self.error_manager = get_error_manager()
         
         # Initialize registry client for loading registered CPs
-        registry_url = os.environ.get("REGISTRY_SERVICE_URL", "http://ev-registry:8080")
+        registry_url = os.environ.get("REGISTRY_SERVICE_URL", "https://ev-registry:8080")
         self.registry_client = RegistryClient(
             registry_url=registry_url,
             verify_ssl=False  # Disable SSL verification for lab environment
@@ -1422,6 +1423,7 @@ async def main():
     parser = argparse.ArgumentParser(description="EV Central Controller")
     parser.add_argument("--listen-port", type=int, help="TCP control plane port")
     parser.add_argument("--http-port", type=int, help="HTTP dashboard port")
+    parser.add_argument("--security-port", type=int, help="Port on which security API is shared")
     parser.add_argument("--kafka-bootstrap", type=str, help="Kafka bootstrap servers")
     parser.add_argument("--db-url", type=str, help="Database URL (optional)")
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
@@ -1453,14 +1455,29 @@ async def main():
         
         # Start dashboard (in separate thread via uvicorn)
         from uvicorn import Config, Server
+        security_api_task = create_security_api(_controller)
         dashboard_app = create_dashboard_app(_controller)
         uvicorn_config = Config(
             dashboard_app,
             host="0.0.0.0",
             port=config.http_port,
+            ssl_keyfile="/certs/central_key.pem",
+            ssl_certfile="/certs/central_cert.pem",
             log_level=config.log_level.lower()
         )
+
+        uvicorn_security_config = Config(
+            security_api_task,
+            host="0.0.0.0",
+            port=config.security_port,
+            ssl_keyfile="/certs/central_key.pem",
+            ssl_certfile="/certs/central_cert.pem",
+            log_level=config.log_level.lower()
+        )
+
         server = Server(uvicorn_config)
+        security_server = Server(uvicorn_security_config)
+        security_server_task = asyncio.create_task(security_server.serve())
         server_task = asyncio.create_task(server.serve())
         
         # Start message processing
@@ -1471,7 +1488,7 @@ async def main():
         #logger.info(f"TCP control server listening on port {config.listen_port}")
         
         # Wait for all tasks
-        await asyncio.gather(tcp_task, server_task, processing_task)
+        await asyncio.gather(tcp_task, server_task, processing_task, security_server_task)
     
     except KeyboardInterrupt:
         logger.info("Shutting down...")
@@ -1492,6 +1509,12 @@ async def main():
             server_task.cancel()
             try:
                 await server_task
+            except asyncio.CancelledError:
+                pass
+        if 'security_server_task' in locals() and not security_server_task.done():
+            security_server_task.cancel()
+            try:
+                await security_server_task
             except asyncio.CancelledError:
                 pass
         await _controller.stop()

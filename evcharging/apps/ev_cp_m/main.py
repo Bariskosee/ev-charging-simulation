@@ -19,6 +19,10 @@ import base64
 import json
 from datetime import datetime
 import httpx
+from fastapi import FastAPI, HTTPException, status, Depends, Header
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from uvicorn import Config, Server
 from loguru import logger
 
 from evcharging.common.config import CPMonitorConfig
@@ -37,6 +41,7 @@ class CPMonitor:
         self.is_healthy = True
         self.fault_simulated = False
         self._running = False
+        self.api_port: int
         
         # Load encryption key from environment for heartbeat signing
         self._encryption_key: bytes | None = None
@@ -78,7 +83,7 @@ class CPMonitor:
         
         # Step 1: Register with EV_Registry if enabled (secure channel)
         if self.config.registry_enabled and self.registry_client:
-            await self._register_with_registry()
+            await self.register_with_registry()
         
         # Step 2: Register with Central (uses Registry token if available)
         await self.register_with_central()
@@ -86,7 +91,7 @@ class CPMonitor:
         self._running = True
         logger.info(f"CP Monitor {self.cp_id} started successfully")
     
-    async def _register_with_registry(self):
+    async def register_with_registry(self):
         """Register with EV_Registry service for secure authentication."""
         logger.info(f"Registering {self.cp_id} with EV_Registry at {self.config.registry_url}...")
         
@@ -125,10 +130,105 @@ class CPMonitor:
             "Continuing with direct Central registration (insecure mode)."
         )
     
+    async def deregister(self):
+        """Deregister from EV_Registry service."""
+        logger.info(f"Deregistering {self.cp_id} from EV_Registry at {self.config.registry_url}...")
+        
+        metadata = {
+            "cp_e_host": self.config.cp_e_host,
+            "cp_e_port": self.config.cp_e_port
+        }
+        
+        max_retries = 5
+        retry_delay = 2.0        
+
+        for attempt in range(1, max_retries + 1):
+            success = await self.registry_client.deregister(
+                cp_id=self.cp_id,
+            )
+            
+            if success:
+                logger.info(
+                    f"✓ CP {self.cp_id} deregistered from EV_Registry "
+                )
+                return success
+            
+            if attempt < max_retries:
+                logger.warning(
+                    f"Deregistration attempt {attempt}/{max_retries} failed, "
+                    f"retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 10.0)
+        
+        logger.warning(
+            f"⚠️ Could not deregister from EV_Registry after {max_retries} attempts. "
+        )
+        
+        return False
+
     async def stop(self):
         """Stop the monitor gracefully."""
         logger.info(f"Stopping CP Monitor: {self.cp_id}")
         self._running = False
+    
+    async def authenticate_with_central(self):
+        """Authenticate with Central."""
+        logger.info(f"Authenticating {self.cp_id} in EV-Central at {self.config.central_host}:{self.config.central_port}...")
+        
+        metadata = {
+            "cp_e_host": self.config.cp_e_host,
+            "cp_e_port": self.config.cp_e_port
+        }
+        
+        max_retries = 5
+        retry_delay = 2.0        
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=10.0,
+                    verify=self.config.registry_verify_ssl
+                ) as client:
+                    response = await client.post(
+                        f"https://{self.config.central_host}:{self.config.central_security_port}/auth/credentials",
+                        json={
+                            "cp_id": self.cp_id,
+                            "credentials": self.registry_client.credentials
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        success = data["success"]
+                        message = data["message"]
+                        self.token = data["token"]
+                        
+                        logger.info(f"Authentication with Central result for CP {self.cp_id}: {message}")
+                        return success
+                    else:
+                        logger.error(
+                            f"Authentication failed: {response.status_code} - {response.text}"
+                        )
+                        return False
+            except httpx.ConnectError as e:
+                logger.warning(f"Cannot connect to EV_Registry: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"Error authenticating with EV_Central: {e}")
+                return False
+            
+            if attempt < max_retries:
+                logger.warning(
+                    f"Authentication attempt {attempt}/{max_retries} failed, "
+                    f"retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 10.0)
+        
+        logger.warning(
+            f"⚠️ Could not authenticate with EV_Central after {max_retries} attempts. "
+        )
     
     async def register_with_central(self):
         """Register or authenticate CP with Central with retry logic.
@@ -141,7 +241,7 @@ class CPMonitor:
             cp_e_port=self.config.cp_e_port
         )
         
-        central_url = f"http://{self.config.central_host}:{self.config.central_port}"
+        central_url = f"https://{self.config.central_host}:{self.config.central_port}"
         
         # Build headers with authentication token if available from Registry
         headers = {"Content-Type": "application/json"}
@@ -162,7 +262,9 @@ class CPMonitor:
                         if self.registry_client.token:
                             headers["Authorization"] = f"Bearer {self.registry_client.token}"
                 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(
+                    verify=self.config.registry_verify_ssl
+                ) as client:
                     response = await client.post(
                         f"{central_url}/cp/register",
                         json=registration.model_dump(mode='json'),
@@ -195,7 +297,7 @@ class CPMonitor:
         Includes JWT token for authenticated communication.
         If encryption key is available, signs the heartbeat with HMAC-SHA256.
         """
-        central_url = f"http://{self.config.central_host}:{self.config.central_port}"
+        central_url = f"https://{self.config.central_host}:{self.config.central_port}"
         heartbeat = {
             "cp_id": self.cp_id,
             "ts": utc_now().isoformat()
@@ -206,7 +308,6 @@ class CPMonitor:
             # Create message to sign (cp_id + timestamp)
             message_to_sign = json.dumps({"cp_id": heartbeat["cp_id"], "ts": heartbeat["ts"]}, sort_keys=True)
             signature = CPEncryptionService.sign_message(message_to_sign, self._encryption_key)
-            logger.info(f"Signature: {signature}")
             heartbeat["signature"] = signature
             heartbeat["signed_message"] = message_to_sign
         
@@ -220,7 +321,9 @@ class CPMonitor:
                 headers["Authorization"] = f"Bearer {self.registry_client.token}"
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                verify=self.config.registry_verify_ssl
+            ) as client:
                 await client.post(
                     f"{central_url}/cp/heartbeat",
                     json=heartbeat,
@@ -244,7 +347,7 @@ class CPMonitor:
     async def notify_central_fault(self):
         """Notify Central that this CP has a fault."""
         try:
-            central_url = f"http://{self.config.central_host}:{self.config.central_port}"
+            central_url = f"https://{self.config.central_host}:{self.config.central_port}"
             fault_data = {
                 "cp_id": self.cp_id,
                 "status": "FAULT",
@@ -254,7 +357,9 @@ class CPMonitor:
             
             headers = await self._get_auth_headers()
             
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                verify=self.config.registry_verify_ssl
+            ) as client:
                 response = await client.post(
                     f"{central_url}/cp/fault",
                     json=fault_data,
@@ -273,7 +378,7 @@ class CPMonitor:
     async def notify_central_healthy(self):
         """Notify Central that this CP health is restored."""
         try:
-            central_url = f"http://{self.config.central_host}:{self.config.central_port}"
+            central_url = f"https://{self.config.central_host}:{self.config.central_port}"
             health_data = {
                 "cp_id": self.cp_id,
                 "status": "HEALTHY",
@@ -283,7 +388,9 @@ class CPMonitor:
             
             headers = await self._get_auth_headers()
             
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                verify=self.config.registry_verify_ssl
+            ) as client:
                 response = await client.post(
                     f"{central_url}/cp/fault",
                     json=health_data,
@@ -386,6 +493,85 @@ class CPMonitor:
         while self._running:
             await asyncio.sleep(1)
 
+def create_app(monitor: CPMonitor) -> FastAPI:
+    """Create and configure FastAPI application."""
+
+    app = FastAPI(
+        title="EV Monitor API",
+        description="Monitor Actions to Register, Deregister or Authenticate in the System",
+        version="1.0.0",
+        docs_url="/docs",
+        redoc_url="/redoc"
+    )
+    
+    # ========== Endpoints ==========
+    
+    @app.get("/", tags=["Health"])
+    async def root():
+        """Health check endpoint."""
+        return {
+            "service": "EV Monitor",
+            "status": "operational",
+            "version": "1.0.0",
+            "timestamp": utc_now().isoformat()
+        }
+    
+    @app.post(
+        "/register",
+        status_code=status.HTTP_200_OK,
+        tags=["Registration"]
+    )
+    async def register_cp():
+        try:
+            await monitor.register_with_registry()
+            return {"cp_id": monitor.cp_id, "success": True}             
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error registering CP {monitor.cp_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during registration"
+            )
+    
+    @app.delete(
+        "/deregister",
+        status_code=status.HTTP_200_OK,
+        tags=["Deregistration"]
+    )
+    async def deregister_cp():
+        try:
+            success = await monitor.deregister()
+            return {"cp_id": monitor.cp_id, "success": success}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error deregistering CP {monitor.cp_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during deregistration"
+            )
+    
+    @app.post(
+        "/authenticate",
+        status_code=status.HTTP_200_OK,
+        tags=["Authentication"]
+    )
+    async def authenticate_cp():
+        try:
+            success = await monitor.authenticate_with_central()
+            return {"cp_id": monitor.cp_id, "success": success}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error authenticating CP {monitor.cp_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during authentication"
+            )
+        
+    return app
+
 
 async def main():
     """Main entry point for CP Monitor service."""
@@ -394,6 +580,7 @@ async def main():
     parser.add_argument("--location", type=str, help="CP location (city/address)")
     parser.add_argument("--cp-e-host", type=str, help="CP Engine host")
     parser.add_argument("--cp-e-port", type=int, help="CP Engine port")
+    parser.add_argument("--cp-api-port", type=int, help="CP Monitor port to share API")
     parser.add_argument("--central-host", type=str, help="Central host")
     parser.add_argument("--central-port", type=int, help="Central HTTP port")
     parser.add_argument("--health-interval", type=float, help="Health check interval (seconds)")
@@ -435,15 +622,32 @@ async def main():
     
     # Initialize monitor
     monitor = CPMonitor(config)
+
+    app = create_app(monitor)
+    
+    logger.info("=" * 60)
+    logger.info("Starting CP Monitor API server...")
+    logger.info(f"API documentation: http://localhost:{config.cp_api_port}/docs")
+    logger.info("=" * 60)
     
     try:
         await monitor.start()
         
+        uvicorn_app = create_app(monitor)
+        uvicorn_config = Config(
+            uvicorn_app,
+            host="0.0.0.0",
+            port=config.cp_api_port,
+            log_level=config.log_level.lower(),
+        )
+        server = Server(uvicorn_config)
+        server_task = asyncio.create_task(server.serve())
+
         # Run health check loop
         health_task = asyncio.create_task(monitor.health_check_loop())
         keyboard_task = asyncio.create_task(monitor.keyboard_handler())
         
-        await asyncio.gather(health_task, keyboard_task)
+        await asyncio.gather(health_task, keyboard_task, server_task)
     
     except KeyboardInterrupt:
         logger.info("Shutting down...")
@@ -451,6 +655,12 @@ async def main():
         logger.error(f"Fatal error: {e}")
         raise
     finally:
+        if 'server_task' in locals() and not server_task.done():
+            server_task.cancel()
+            try:
+                await server_task
+            except asyncio.CancelledError:
+                pass
         await monitor.stop()
 
 

@@ -28,7 +28,7 @@ class WeatherConfig:
         self.default_cities: List[str] = []  # Cities to monitor by default
         self.locations_file: str = "/app/evcharging/common/CP_cities.txt" # File to store/load locations
         self.dashboard_port: int = 8003  # HTTP dashboard port
-        self.central_url: str = "http://localhost:8000"
+        self.central_url: str = "https://localhost:8000"
         
     def load(self) -> bool:
         """

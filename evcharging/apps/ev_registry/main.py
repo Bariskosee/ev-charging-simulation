@@ -779,8 +779,8 @@ def main():
             app,
             host="0.0.0.0",
             port=config.api_port,
-            log_level=config.log_level.lower(),
-            **ssl_kwargs
+            **ssl_kwargs,
+            log_level=config.log_level.lower()
         )
     except KeyboardInterrupt:
         logger.info("Shutting down EV Registry...")

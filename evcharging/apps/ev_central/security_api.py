@@ -10,14 +10,15 @@ Provides endpoints for:
 Includes centralized audit logging for all security operations.
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from fastapi import FastAPI, HTTPException, status, Header, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 from loguru import logger
 
-from evcharging.apps.ev_central.main import get_controller, EVCentralController
+if TYPE_CHECKING:
+    from evcharging.apps.ev_central.main import EVCentralController
 from evcharging.common.cp_security import CPSecurityStatus
 from evcharging.common.audit_service import get_audit_service, RequestContext
 from evcharging.common.audit_middleware import (
@@ -100,7 +101,7 @@ class CPSecurityInfo(BaseModel):
 
 # ========== API Application ==========
 
-def create_security_api(controller: EVCentralController) -> FastAPI:
+def create_security_api(controller: "EVCentralController") -> FastAPI:
     """
     Create FastAPI application for security operations.
     

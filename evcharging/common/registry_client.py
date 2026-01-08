@@ -142,6 +142,62 @@ class RegistryClient:
             logger.error(f"Error registering with EV_Registry: {e}")
             return False
     
+    async def deregister(self, cp_id: str) -> bool:
+        """
+        Deregister this CP from EV_Registry.
+        
+        Args:
+            cp_id: Charging point identifier
+
+        Returns:
+            True if deregistration successful
+        """
+        deregistration_data = {
+            "cp_id": cp_id
+        }
+        
+        try:
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                verify=self.verify_ssl
+            ) as client:
+                response = await client.delete(
+                    f"{self.registry_url}/cp/{cp_id}",
+                )
+                
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    
+                    logger.info(
+                        f"CP {cp_id} deregistered successfully from EV_Registry"
+                    )
+                    logger.info(
+                        f"Current CP status in EV_Registry: {data.get('status')}"
+                    )
+                    return True
+                else:
+                    error_detail = response.text
+                    try:
+                        error_json = response.json()
+                        error_detail = error_json.get("detail", error_detail)
+                    except Exception:
+                        pass
+                    
+                    logger.error(
+                        f"Deregistration failed: {response.status_code} - {error_detail}"
+                    )
+                    return False
+        
+        except httpx.ConnectError as e:
+            logger.warning(f"Cannot connect to EV_Registry at {self.registry_url}: {e}")
+            return False
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout connecting to EV_Registry at {self.registry_url}")
+            return False
+        except Exception as e:
+            logger.error(f"Error deregistering with EV_Registry: {e}")
+            return False        
+
     async def authenticate(self) -> bool:
         """
         Authenticate and get fresh token.

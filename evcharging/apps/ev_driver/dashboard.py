@@ -244,7 +244,7 @@ def create_driver_dashboard_app(driver: "EVDriver") -> FastAPI:
         service_status = "ok"
         
         try:
-            central_url = os.getenv('DRIVER_CENTRAL_HTTP_URL', 'http://ev-central:8000')
+            central_url = os.getenv('DRIVER_CENTRAL_HTTP_URL', 'https://ev-central:8000')
             async with aiohttp.ClientSession() as session:
                 timeout = aiohttp.ClientTimeout(total=3)
                 async with session.get(f'{central_url}/weather', timeout=timeout) as response:

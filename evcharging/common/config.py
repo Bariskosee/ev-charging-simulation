@@ -13,6 +13,7 @@ class CentralConfig(BaseSettings):
     
     listen_port: int = Field(default=9999, description="TCP control plane port")
     http_port: int = Field(default=8000, description="HTTP dashboard port")
+    security_port: int = Field(default=9000, description="Port on which security API is shared")
     kafka_bootstrap: str = Field(default="kafka:9092", description="Kafka bootstrap servers")
     db_url: Optional[str] = Field(default=None, description="Database URL (optional)")
     log_level: str = Field(default="INFO", description="Logging level")
@@ -52,14 +53,16 @@ class CPMonitorConfig(BaseSettings):
     location: str = Field(default="Unknown", description="CP location (city/address)")
     cp_e_host: str = Field(default="localhost", description="CP Engine host")
     cp_e_port: int = Field(default=8001, description="CP Engine port")
+    cp_api_port: int = Field(default=9001, description="CP Monitor API port")
     central_host: str = Field(default="localhost", description="Central host")
     central_port: int = Field(default=8000, description="Central HTTP port")
+    central_security_port: int = Field(default=9000, description="Port on which Central Security API is shared")
     health_interval: float = Field(default=1.0, description="Health check interval (seconds)")
     log_level: str = Field(default="INFO", description="Logging level")
     
     # EV_Registry settings for secure CP authentication
     registry_url: str = Field(
-        default="http://localhost:8080",
+        default="https://localhost:8080",
         description="EV_Registry API URL"
     )
     registry_enabled: bool = Field(
@@ -67,7 +70,7 @@ class CPMonitorConfig(BaseSettings):
         description="Enable registration with EV_Registry (set to False for legacy mode)"
     )
     registry_verify_ssl: bool = Field(
-        default=True,
+        default=False,
         description="Verify SSL certificates when connecting to Registry"
     )
     registry_admin_api_key: Optional[str] = Field(
@@ -92,7 +95,7 @@ class DriverConfig(BaseSettings):
     request_interval: float = Field(default=4.0, description="Interval between requests (seconds)")
     log_level: str = Field(default="INFO", description="Logging level")
     dashboard_port: int = Field(default=8100, description="HTTP dashboard port")
-    central_http_url: str = Field(default="http://localhost:8000", description="EV Central HTTP base URL")
+    central_https_url: str = Field(default="https://localhost:8000", description="EV Central HTTP base URL")
     auto_run_requests: bool = Field(default=False, description="Automatically run scripted requests on startup")
     
     model_config = SettingsConfigDict(
@@ -112,10 +115,10 @@ class RegistryConfig(BaseSettings):
     
     # TLS/SSL Configuration (MANDATORY for production)
     tls_enabled: bool = Field(default=True, description="Enable HTTPS/TLS (REQUIRED for production)")
-    tls_cert_file: Optional[str] = Field(default=None, description="Path to TLS certificate file")
-    tls_key_file: Optional[str] = Field(default=None, description="Path to TLS private key file")
+    tls_cert_file: Optional[str] = Field(default="/certs/registry_key.pem", description="Path to TLS certificate file")
+    tls_key_file: Optional[str] = Field(default="/certs/registry_cert.pem", description="Path to TLS private key file")
     allow_insecure: bool = Field(default=False, description="Allow insecure HTTP (dev only - DO NOT USE IN PRODUCTION)")
-    
+
     # Security Settings
     token_expiration_hours: int = Field(default=24, description="Authentication token expiration in hours")
     secret_key: str = Field(..., description="Secret key for token signing (REQUIRED - must be strong random value)")
@@ -138,7 +141,7 @@ class RegistryConfig(BaseSettings):
 class WeatherConfig(BaseSettings):
     """Configuration for the weather component"""
     openweather_api_key: str = Field(default="X-OpenWeather-API-Key", description="API key to access OpenWeather")
-    central_http_url: str = Field(default="http://localhost:8000", description="EV Central HTTP base URL")
+    central_https_url: str = Field(default="https://localhost:8000", description="EV Central HTTP base URL")
     poll_interval: int = Field(default=4, description="Interval in which the EV_W poll data from OpenWeather")
     city_file: str = Field(default="/app/evcharging/common/CP_cities.txt", description="File in which are kept the cities")
     log_level: str = Field(default="INFO", description="Logging level")

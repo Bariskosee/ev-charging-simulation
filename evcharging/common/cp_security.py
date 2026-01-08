@@ -179,11 +179,6 @@ class CPEncryptionService:
             True if signature is valid
         """
         try:
-            logger.info(f"Message: {message}")
-            logger.info(f"Signature (b64): {signature_b64}")
-            logger.info(f"Signature: {key}"
-                        f"Key length: {len(key)}")
-
             expected_sig = hmac.new(key, message.encode('utf-8'), hashlib.sha256).digest()
             actual_sig = base64.b64decode(signature_b64)
             return hmac.compare_digest(expected_sig, actual_sig)
