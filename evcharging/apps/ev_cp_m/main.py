@@ -82,11 +82,11 @@ class CPMonitor:
         logger.info(f"Starting CP Monitor for {self.cp_id}")
         
         # Step 1: Register with EV_Registry if enabled (secure channel)
-        if self.config.registry_enabled and self.registry_client:
-            await self.register_with_registry()
+        # if self.config.registry_enabled and self.registry_client:
+        #     await self.register_with_registry()
         
         # Step 2: Register with Central (uses Registry token if available)
-        await self.register_with_central()
+        # await self.register_with_central()
         
         self._running = True
         logger.info(f"CP Monitor {self.cp_id} started successfully")

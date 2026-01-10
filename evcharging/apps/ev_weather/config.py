@@ -28,7 +28,8 @@ class WeatherConfig:
         self.default_cities: List[str] = []  # Cities to monitor by default
         self.locations_file: str = "/app/evcharging/common/CP_cities.txt" # File to store/load locations
         self.dashboard_port: int = 8003  # HTTP dashboard port
-        self.central_url: str = "https://localhost:8000"
+        self.central_url: str = "https://localhost"
+        self.central_port: int = 8000
         
     def load(self) -> bool:
         """
@@ -89,7 +90,8 @@ class WeatherConfig:
                             self.temperature_unit = value
                         elif key == 'WEATHER_CENTRAL_HTTP_URL':
                             self.central_url = value
-            
+                        elif key == 'WEATHER_CENTRAL_PORT':
+                            self.central_port = value            
             return self.api_key is not None
         except Exception as e:
             logger.error(f"Error reading .env file: {e}")
@@ -107,6 +109,9 @@ class WeatherConfig:
         
         if url := os.getenv('WEATHER_CENTRAL_HTTP_URL'):
             self.central_url = url
+        
+        if port := os.getenv('WEATHER_CENTRAL_PORT'):
+            self.centrl_port = port
         
         return self.api_key is not None
     
@@ -127,6 +132,7 @@ class WeatherConfig:
             self.locations_file = weather_config.get('locations_file', '/app/evcharging/common/CP_cities.txt')
             self.dashboard_port = weather_config.get('dashboard_port', 8003)
             self.central_url = weather_config.get('central_url')
+            self.central_port = weather_config.get('central_port')
             
             # Read default cities from locations section
             locations_config = data.get('locations', {})

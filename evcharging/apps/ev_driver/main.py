@@ -374,7 +374,7 @@ class EVDriver:
                     # Log warning only on first failure or every 10th failure
                     if self._consecutive_failures == 1:
                         logger.warning(
-                            f"Driver: Central dashboard unreachable - {exc}. "
+                            f"Driver: Central {self.central_https_url} dashboard unreachable - {exc}. "
                             "CP status display may be stale. Charging operations continue via Kafka."
                         )
                         # Report error to error manager for display
@@ -397,7 +397,7 @@ class EVDriver:
                                     )
                                 )
                     elif self._consecutive_failures % 10 == 0:
-                        logger.debug(f"Driver: Central still unreachable ({self._consecutive_failures} failures)")
+                        logger.debug(f"Driver: Central {self.central_https_url} still unreachable ({self._consecutive_failures} failures)")
                         
                 await asyncio.sleep(1.5)
         logger.info("Driver: central polling loop stopped")
@@ -767,6 +767,7 @@ async def main():
     parser.add_argument("--requests-file", type=str, help="File with CP IDs to request")
     parser.add_argument("--request-interval", type=float, help="Interval between requests (seconds)")
     parser.add_argument("--log-level", type=str, help="Log level")
+    parser.add_argument("--central-https-url", type=str, help="URL to connect to the Central")
     
     args = parser.parse_args()
     

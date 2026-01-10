@@ -99,7 +99,7 @@ services:
       - evcharging-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"https://localhost:8000/health\")'"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('https://localhost:8000/health', context=__import__('ssl')._create_unverified_context())"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -152,7 +152,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f https://localhost:8080/ || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('https://localhost:8080/', context=__import__('ssl')._create_unverified_context())"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -169,7 +169,8 @@ services:
       - "8003:8003"  # Weather API endpoint
     environment:
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
-      WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
+      WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central}
+      WEATHER_CENTRAL_PORT: ${CENTRAL_HTTP_PORT:-8000}
       WEATHER_POLL_INTERVAL: ${WEATHER_POLLING_INTERVAL:-4}
       WEATHER_CITY_FILE: ${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
       WEATHER_LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -446,7 +447,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 120.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8100
-      DRIVER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
+      DRIVER_CENTRAL_HTTPS_URL: ${CENTRAL_HTTP_URL:-https://ev-central:8000}
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro

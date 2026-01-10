@@ -300,13 +300,14 @@ class WeatherService:
     
     async def central_notifications(self, temp_data: dict):
         for city in self.latest_data.keys():
-            if (self.latest_data[city].temperature <= 0 
-                    and (temp_data[city] is None or temp_data[city].temperature > 0)):
+            if (self.latest_data[city].temperature <= 0):
                 try:
                     print("Notifing the central about negative temperature")
-                    async with httpx.AsyncClient() as client:
+                    async with httpx.AsyncClient(
+                        verify=False
+                    ) as client:
                         response = await client.post(
-                            f"{self.config.central_url}/weather/alert",
+                            f"{self.config.central_url}:{self.config.central_port}/weather/alert",
                             params={
                                 "city": city, 
                                 "temp": self.latest_data[city].temperature
@@ -319,9 +320,11 @@ class WeatherService:
             elif (self.latest_data[city].temperature > 0 and temp_data[city] is not None
                     and temp_data[city].temperature <= 0):
                 try:
-                    async with httpx.AsyncClient() as client:
+                    async with httpx.AsyncClient(
+                        verify=False
+                    ) as client:
                         response = await client.post(
-                            f"{self.config.central_url}/weather/cancel_alert",
+                            f"{self.config.central_url}:{self.config.central_port}/weather/cancel_alert",
                             params={
                                 "city": city, 
                                 "temp": self.latest_data[city].temperature
