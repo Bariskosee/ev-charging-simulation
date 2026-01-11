@@ -767,14 +767,22 @@ class EVCentralController:
             # Create placeholder and immediately activate it since monitor is alive
             cp = ChargingPoint(cp_id)
             cp.state = CPState.ACTIVATED  # Set to ACTIVATED instead of DISCONNECTED
+
+            # TO DO:
+            # check if CP is registered in cp_registry DB
+            # check CPSecurityState in cp_security_status DB
+            # if any of those fail - ignore the ping
+            # if both pass - record the CP and start receving heartbeats from it
+            # ANOTHER APPROACH: if the CP is registered, save it so it becomes visible in the Dashboard
+            # BUT it's not allowed to operate and the heartbeats are not yet received
             
-            # Auto-authorize CP for lab environment
-            cp.is_authenticated = True
-            cp.has_encryption_key = True
-            cp.security_status = CPSecurityStatus.ACTIVE
+            # Auto-authorize CP for lab environment - WRONG
+            # cp.is_authenticated = True
+            # cp.has_encryption_key = True
+            # cp.security_status = CPSecurityStatus.ACTIVE
             
-            cp.record_monitor_heartbeat()
-            self.charging_points[cp_id] = cp
+            # cp.record_monitor_heartbeat()
+            # self.charging_points[cp_id] = cp
             
             # Log the auto-registration
             logger.info(f"CP {cp_id} auto-registered via monitor heartbeat - state: ACTIVATED, security: ACTIVE")
