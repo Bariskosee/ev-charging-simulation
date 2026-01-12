@@ -152,9 +152,6 @@ class RegistryClient:
         Returns:
             True if deregistration successful
         """
-        deregistration_data = {
-            "cp_id": cp_id
-        }
         
         try:
             async with httpx.AsyncClient(

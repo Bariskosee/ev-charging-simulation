@@ -30,7 +30,7 @@ ENV PYTHONPATH=/app
 ENV SERVICE_TYPE=central
 
 # Expose ports
-EXPOSE 8000 9999
+EXPOSE 8000 9000 9999
 
 # Run Central service with Kafka wait
 CMD ["/usr/local/bin/wait-for-kafka.sh"]

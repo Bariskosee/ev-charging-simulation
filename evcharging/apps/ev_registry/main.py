@@ -393,6 +393,10 @@ def create_app(config: RegistryConfig) -> FastAPI:
         """
         try:
             success = db.deregister_cp(cp_id)
+
+            # TO DO:
+            # add db calls to set security_status of a CP to OUT_OF_SERVICE for example
+            # add db calls to delete the key?
             
             if not success:
                 raise HTTPException(

@@ -536,6 +536,10 @@ class CPRegistryDB:
                       certificate_fingerprint, metadata, registration_date))
                 conn.commit()
                 return True  # New registration
+                # TO DO:
+                # not only should it be REGISTERED IN cp_registry
+                # but also PENDING in cp_security using CPSecurityStatus enum
+                # Although with stuff that we have already it should work
     
     def deregister_cp(self, cp_id: str) -> bool:
         """

@@ -775,16 +775,23 @@ class EVCentralController:
             # if both pass - record the CP and start receving heartbeats from it
             # ANOTHER APPROACH: if the CP is registered, save it so it becomes visible in the Dashboard
             # BUT it's not allowed to operate and the heartbeats are not yet received
+
+            security_status = self.security_db.get_cp_security_status(cp_id)
+
+            if not security_status:
+                return
             
-            # Auto-authorize CP for lab environment - WRONG
-            # cp.is_authenticated = True
-            # cp.has_encryption_key = True
-            # cp.security_status = CPSecurityStatus.ACTIVE
+            status_enum = CPSecurityStatus(security_status['registration_status'])
+
+            if (status_enum != CPSecurityStatus.ACTIVE):
+                return
             
-            # cp.record_monitor_heartbeat()
-            # self.charging_points[cp_id] = cp
+            cp.is_authenticated = True
+            cp.has_encryption_key = True
+            self.charging_points[cp_id] = cp
+            cp.record_monitor_heartbeat()
             
-            # Log the auto-registration
+            # Log the registration
             logger.info(f"CP {cp_id} auto-registered via monitor heartbeat - state: ACTIVATED, security: ACTIVE")
     
     def verify_heartbeat_signature(self, cp_id: str, message: str, signature: str) -> tuple[bool, str]:
