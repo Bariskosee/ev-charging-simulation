@@ -92,7 +92,7 @@ services:
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     volumes:
       - data:/data
-      - ./certs:/certs:ro
+      - ./certs:/certs
     depends_on:
       kafka:
         condition: service_healthy
@@ -139,11 +139,13 @@ services:
       REGISTRY_REQUIRE_CERTIFICATE: "${REGISTRY_REQUIRE_CERTIFICATE:-false}"
       # Admin API Key for re-registration (optional but recommended)
       REGISTRY_ADMIN_API_KEY: "${REGISTRY_ADMIN_API_KEY:-}"
+      REGISTRY_CENTRAL_URL: ${REGISTRY_CENTRAL_URL:-https://ev-central}
+      REGISTRY_CENTRAL_PORT: ${REGISTRY_CENTRAL_PORT:-9000}
     volumes:
       - data:/data
       # Mount certificates if TLS is enabled
-      - ./certs:/certs:ro
-      - ./certs:/certs:ro
+      - ./certs:/certs
+      - ./certs:/certs
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -167,10 +169,10 @@ services:
       dockerfile: docker/Dockerfile.weather
     container_name: ev-weather
     ports:
-      - "8003:8003"  # Weather API endpoint
+      - "8200:8200"  # Weather API endpoint
     environment:
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
-      WEATHER_CENTRAL_HTTP_URL: ${CENTRAL_HTTP_URL:-https://ev-central}
+      WEATHER_CENTRAL_HTTP_URL: ${WEATHER_CENTRAL_HTTP_URL:-https://ev-central}
       WEATHER_CENTRAL_PORT: ${CENTRAL_HTTP_PORT:-8000}
       WEATHER_POLL_INTERVAL: ${WEATHER_POLLING_INTERVAL:-4}
       WEATHER_CITY_FILE: ${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
@@ -315,6 +317,7 @@ services:
       CP_MONITOR_CP_E_HOST: ev-cp-e-1
       CP_MONITOR_CP_E_PORT: 8001
       CP_MONITOR_CP_API_PORT: 9001
+      CP_LOCATION_FILE: ${CP_LOCATION_FILE:-/app/CP_cities.txt}
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
@@ -322,6 +325,8 @@ services:
       CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
     depends_on:
       - ev-central
       - ev-cp-e-1
@@ -341,6 +346,7 @@ services:
       CP_MONITOR_CP_E_HOST: ev-cp-e-2
       CP_MONITOR_CP_E_PORT: 8002
       CP_MONITOR_CP_API_PORT: 9002
+      CP_LOCATION_FILE: ${CP_LOCATION_FILE:-/app/CP_cities.txt}
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
@@ -348,6 +354,8 @@ services:
       CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
     depends_on:
       - ev-central
       - ev-cp-e-2
@@ -367,6 +375,7 @@ services:
       CP_MONITOR_CP_E_HOST: ev-cp-e-3
       CP_MONITOR_CP_E_PORT: 8003
       CP_MONITOR_CP_API_PORT: 9003
+      CP_LOCATION_FILE: ${CP_LOCATION_FILE:-/app/CP_cities.txt}
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
@@ -374,6 +383,8 @@ services:
       CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
     depends_on:
       - ev-central
       - ev-cp-e-3
@@ -393,6 +404,7 @@ services:
       CP_MONITOR_CP_E_HOST: ev-cp-e-4
       CP_MONITOR_CP_E_PORT: 8004
       CP_MONITOR_CP_API_PORT: 9004
+      CP_LOCATION_FILE: ${CP_LOCATION_FILE:-/app/CP_cities.txt}
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
@@ -400,6 +412,8 @@ services:
       CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
     depends_on:
       - ev-central
       - ev-cp-e-4
@@ -419,6 +433,7 @@ services:
       CP_MONITOR_CP_E_HOST: ev-cp-e-5
       CP_MONITOR_CP_E_PORT: 8005
       CP_MONITOR_CP_API_PORT: 9005
+      CP_LOCATION_FILE: ${CP_LOCATION_FILE:-/app/CP_cities.txt}
       CP_MONITOR_CENTRAL_HOST: ${CENTRAL_HOST:-ev-central}
       CP_MONITOR_CENTRAL_PORT: ${CENTRAL_PORT:-8000}
       CP_MONITOR_HEALTH_INTERVAL: 2.0
@@ -426,6 +441,8 @@ services:
       CP_MONITOR_REGISTRY_URL: ${REGISTRY_URL:-https://ev-registry:8080}
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
     depends_on:
       - ev-central
       - ev-cp-e-5
@@ -575,4 +592,5 @@ volumes:
   kafka-data:
   data:
   certs:
+
 

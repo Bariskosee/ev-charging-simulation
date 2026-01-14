@@ -37,6 +37,8 @@ class CPMonitor:
     
     def __init__(self, config: CPMonitorConfig):
         self.config = config
+        self.location = config.location
+        self.location_file = config.location_file
         self.cp_id = config.cp_id
         self.is_healthy = True
         self.fault_simulated = False
@@ -77,9 +79,18 @@ class CPMonitor:
         else:
             logger.info(f"CP {self.cp_id}: No encryption key in {env_var}, heartbeats will be unsigned")
     
+    async def load_location(self):
+        with open(self.location_file, "r") as f:
+            for line in f:
+                cp_id, city = line.strip().split(",")
+                if cp_id == self.cp_id:
+                    self.location = city
+                    return
+    
     async def start(self):
         """Initialize and start the CP Monitor."""
         logger.info(f"Starting CP Monitor for {self.cp_id}")
+        await self.load_location()
         
         # Step 1: Register with EV_Registry if enabled (secure channel)
         # if self.config.registry_enabled and self.registry_client:
@@ -569,6 +580,34 @@ def create_app(monitor: CPMonitor) -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error during authentication"
             )
+        
+    @app.post(
+        "/location",
+        status_code=status.HTTP_200_OK,
+        tags=["Location"]
+    )
+    async def change_location():
+        try:
+            success = await monitor.load_location()
+            return {"cp_id": monitor.cp_id, "success": success}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error changing location of CP {monitor.cp_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during location change"
+            )
+    
+    @app.get(
+        "/get_location",
+        status_code=status.HTTP_200_OK,
+        tags=["Get_location"]
+    )
+    async def get_location():
+        return {
+            "location": monitor.location
+        }
         
     return app
 

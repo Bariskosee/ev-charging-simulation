@@ -51,6 +51,7 @@ class CPMonitorConfig(BaseSettings):
     
     cp_id: str = Field(..., description="Charging Point ID")
     location: str = Field(default="Unknown", description="CP location (city/address)")
+    location_file: str = Field(default="/app/CP_cities.txt", description="File for CP locations")
     cp_e_host: str = Field(default="localhost", description="CP Engine host")
     cp_e_port: int = Field(default=8001, description="CP Engine port")
     cp_api_port: int = Field(default=9001, description="CP Monitor API port")
@@ -125,6 +126,8 @@ class RegistryConfig(BaseSettings):
     jwt_issuer: str = Field(default="ev-registry", description="JWT issuer claim")
     jwt_audience: str = Field(default="ev-central", description="JWT audience claim")
     require_certificate: bool = Field(default=False, description="Require client certificates for authentication")
+    central_url: str = Field(default="https://ev-central", description="URL of the Central")
+    central_port: str = Field(default="9000", description="Port of the Central security API")
     
     # API Security
     api_key_header: str = Field(default="X-Registry-API-Key", description="API key header name")

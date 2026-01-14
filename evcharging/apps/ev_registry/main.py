@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, status, Depends, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
+import httpx
 from loguru import logger
 
 from evcharging.common.config import RegistryConfig
@@ -136,6 +137,13 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: str
+
+class OperationResponse(BaseModel):
+    """Generic operation response."""
+    success: bool
+    status: str
+    cp_id: str
+    message: str
 
 
 # ========== FastAPI Application ==========
@@ -392,27 +400,80 @@ def create_app(config: RegistryConfig) -> FastAPI:
         - Does not delete historical data
         """
         try:
+            # 1. DEREGISTER from cp_registry table
             success = db.deregister_cp(cp_id)
 
-            # TO DO:
-            # add db calls to set security_status of a CP to OUT_OF_SERVICE for example
-            # add db calls to delete the key?
-            
             if not success:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"CP {cp_id} not found or already deregistered"
                 )
-            
+
             logger.info(f"CP deregistered: {cp_id}")
-            
-            return {
+
+            # 2. Revoke the key in cp_security_status table using central API
+
+            payload = {
                 "cp_id": cp_id,
-                "status": "DEREGISTERED",
-                "message": "CP deregistered successfully",
-                "timestamp": utc_now().isoformat()
+                "reason": "Deregistration request from the CP"
             }
-        
+            
+            headers = {
+                "Content-Type": "application/json",
+                "X-Admin-Key": config.admin_api_key
+            }
+
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.post(
+                    f"{config.central_url}:{config.central_port}/status/revoke",
+                    json=payload,
+                    headers=headers
+            )
+            
+            if response.is_success:
+                data = response.json()
+                logger.info(f"CP {cp_id} revoked successfully: {data.get('message')}")
+                
+                return OperationResponse (
+                    success=True,
+                    status="DEREGISTERED",
+                    cp_id=cp_id,
+                    message=data.get("message", "CP revoked successfully")
+                )
+                        
+            else:
+                try:
+                    error_data = response.json()
+                    error_detail = error_data.get("detail", f"HTTP {response.status_code}")
+                except:
+                    error_detail = f"HTTP {response.status_code}: {response.text[:200]}"
+                
+                logger.error(f"Failed to revoke CP {cp_id}: {error_detail}")
+                
+                if response.status_code == 401:
+                    error_msg = "Authentication failed - invalid admin key"
+                elif response.status_code == 404:
+                    error_msg = f"CP {cp_id} not found in Central system"
+                else:
+                    error_msg = error_detail
+                
+                return OperationResponse (
+                    success=False,
+                    status=None,
+                    cp_id=cp_id,
+                    message="Revocation failed"
+                )
+    
+        # Network/Connection errors
+        except httpx.ConnectError as e:
+            error_msg = f"Cannot connect to Central system at {config.central_url}:{config.central_port}"
+            logger.error(f"Connection error: {error_msg}")
+            return OperationResponse(
+                success=False,
+                status=None,
+                cp_id=cp_id,
+                message="Connection failed"
+            )        
         except HTTPException:
             raise
         except Exception as e:
@@ -715,6 +776,8 @@ def parse_args():
     parser.add_argument("--log-level", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Log level")
     parser.add_argument("--tls-cert", type=str, help="Path to TLS certificate file")
     parser.add_argument("--tls-key", type=str, help="Path to TLS private key file")
+    parser.add_argument("--central-url", type=str, help="Path to connect to the Central")
+    parser.add_argument("--central-port", type=int, help="Port to connect to Central security API")
     return parser.parse_args()
 
 
@@ -737,6 +800,10 @@ def main():
         config.tls_enabled = True
     if args.tls_key:
         config.tls_key_file = args.tls_key
+    if args.central_url:
+        config.central_url = args.central_url
+    if args.central_port:
+        config.central_port = args.central_port
     
     # Configure logging
     logger.remove()
@@ -754,6 +821,7 @@ def main():
     logger.info(f"Database: {config.db_path}")
     logger.info(f"TLS Enabled: {config.tls_enabled}")
     logger.info(f"Log Level: {config.log_level}")
+    logger.info(f"Central URL: {config.central_url}:{config.central_port}")
     
     # Create FastAPI app
     app = create_app(config)
