@@ -403,11 +403,11 @@ def create_app(config: RegistryConfig) -> FastAPI:
             # 1. DEREGISTER from cp_registry table
             success = db.deregister_cp(cp_id)
 
-            if not success:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"CP {cp_id} not found or already deregistered"
-                )
+            # if not success:
+            #     raise HTTPException(
+            #         status_code=status.HTTP_404_NOT_FOUND,
+            #         detail=f"CP {cp_id} not found or already deregistered"
+            #     )
 
             logger.info(f"CP deregistered: {cp_id}")
 
