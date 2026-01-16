@@ -399,15 +399,18 @@ class EVCentralController:
             cp.cp_e_port = registration.cp_e_port
             logger.info(f"Updated CP registration: {cp_id}")
         
-        # Set to ACTIVATED state
+        security_state = self.security_db.get_cp_security_status(cp_id)
+        if (security_state != CPSecurityStatus.ACTIVE):
+            logger.info(f"CP {cp_id} not authenticated")
+            return
+        
         cp = self.charging_points[cp_id]
-        cp.state = CPState.ACTIVATED
         cp.last_update = utc_now()
+        cp.state = CPState.ACTIVATED
         cp.record_monitor_heartbeat()
         
         self.weather_by_city.update({get_metadata(cp_id).city: None})
         
-        # Auto-authorize CP for lab environment (no EV_Registry dependency)
         cp.is_authenticated = True
         cp.has_encryption_key = True
         cp.security_status = CPSecurityStatus.ACTIVE
