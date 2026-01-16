@@ -589,7 +589,8 @@ def create_app(monitor: CPMonitor) -> FastAPI:
     async def change_location():
         try:
             success = await monitor.load_location()
-            return {"cp_id": monitor.cp_id, "success": success}
+            return {"cp_id": monitor.cp_id, "success": success,
+                    "location": monitor.location}
         except HTTPException:
             raise
         except Exception as e:
@@ -598,6 +599,7 @@ def create_app(monitor: CPMonitor) -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error during location change"
             )
+        
     
     @app.get(
         "/get_location",

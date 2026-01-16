@@ -124,6 +124,9 @@ services:
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
+    volumes:
+      - data:/data
+      - ./certs:/certs
     depends_on:
       kafka:
         condition: service_healthy
@@ -135,7 +138,7 @@ services:
         ipv4_address: 172.33.0.20
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('https://localhost:8000/health', context=__import__('ssl')._create_unverified_context())"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -158,17 +161,19 @@ services:
       REGISTRY_JWT_AUDIENCE: "ev-central"
       REGISTRY_TLS_ENABLED: "${REGISTRY_TLS_ENABLED:-false}"
       REGISTRY_ALLOW_INSECURE: "${REGISTRY_ALLOW_INSECURE:-true}"
-      # No cert files?
+      REGISTRY_TLS_CERT_FILE: "${REGISTRY_TLS_CERT_FILE:-}"
+      REGISTRY_TLS_KEY_FILE: "${REGISTRY_TLS_KEY_FILE:-}"
       REGISTRY_REQUIRE_CERTIFICATE: "${REGISTRY_REQUIRE_CERTIFICATE:-false}"
       REGISTRY_ADMIN_API_KEY: "${REGISTRY_ADMIN_API_KEY:-}"
     volumes:
-      - registry-data:/data
+      - data:/data
+      - ./certs:/certs
     networks:
       backend-network:
         ipv4_address: 172.30.0.30
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('https://localhost:8080/', context=__import__('ssl')._create_unverified_context())"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -180,10 +185,11 @@ services:
       dockerfile: docker/Dockerfile.weather
     container_name: ev-weather
     ports:
-      - "8003:8003"
+      - "8200:8200"
     environment:
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
-      WEATHER_CENTRAL_HTTP_URL: http://172.30.0.20:8000
+      WEATHER_CENTRAL_HTTP_URL: https://172.30.0.20
+      WEATHER_CENTRAL_PORT: 8000
       WEATHER_POLL_INTERVAL: ${WEATHER_POLLING_INTERVAL:-4}
       WEATHER_CITY_FILE: ${CITY_FILE:-/app/evcharging/common/CP_cities.txt}
       WEATHER_LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -327,16 +333,21 @@ services:
       CP_MONITOR_KAFKA_BOOTSTRAP: kafka:9092
       CP_MONITOR_CP_E_HOST: 172.31.0.101
       CP_MONITOR_CP_E_PORT: 8001
+      CP_MONITOR_CP_API_PORT: 9001
       CP_MONITOR_CENTRAL_HOST: ev-central
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
       EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       kafka:
         condition: service_started
       ev-cp-e-1:
         condition: service_started
+    ports:
+      - "9001:9001"
     networks:
       monitoring-network:
         ipv4_address: 172.32.0.101
@@ -358,16 +369,21 @@ services:
       CP_MONITOR_KAFKA_BOOTSTRAP: kafka:9092
       CP_MONITOR_CP_E_HOST: 172.31.0.102
       CP_MONITOR_CP_E_PORT: 8002
+      CP_MONITOR_CP_API_PORT: 9002
       CP_MONITOR_CENTRAL_HOST: ev-central
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
       EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       kafka:
         condition: service_started
       ev-cp-e-2:
         condition: service_started
+    ports:
+      - "9002:9002"
     networks:
       monitoring-network:
         ipv4_address: 172.32.0.102
@@ -387,16 +403,21 @@ services:
       CP_MONITOR_KAFKA_BOOTSTRAP: kafka:9092
       CP_MONITOR_CP_E_HOST: 172.31.0.103
       CP_MONITOR_CP_E_PORT: 8003
+      CP_MONITOR_CP_API_PORT: 9003
       CP_MONITOR_CENTRAL_HOST: ev-central
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       kafka:
         condition: service_started
       ev-cp-e-3:
         condition: service_started
+    ports:
+      - "9003:9003"
     networks:
       monitoring-network:
         ipv4_address: 172.32.0.103
@@ -416,16 +437,21 @@ services:
       CP_MONITOR_KAFKA_BOOTSTRAP: kafka:9092
       CP_MONITOR_CP_E_HOST: 172.31.0.104
       CP_MONITOR_CP_E_PORT: 8004
+      CP_MONITOR_CP_API_PORT: 9004
       CP_MONITOR_CENTRAL_HOST: ev-central
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       kafka:
         condition: service_started
       ev-cp-e-4:
         condition: service_started
+    ports:
+      - "9004:9004"
     networks:
       monitoring-network:
         ipv4_address: 172.32.0.104
@@ -445,16 +471,21 @@ services:
       CP_MONITOR_KAFKA_BOOTSTRAP: kafka:9092
       CP_MONITOR_CP_E_HOST: 172.31.0.105
       CP_MONITOR_CP_E_PORT: 8005
+      CP_MONITOR_CP_API_PORT: 9005
       CP_MONITOR_CENTRAL_HOST: ev-central
       CP_MONITOR_CENTRAL_PORT: 8000
       CP_MONITOR_HEALTH_INTERVAL: 5.0
       CP_MONITOR_LOG_LEVEL: INFO
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
+    volumes:
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       kafka:
         condition: service_started
       ev-cp-e-5:
         condition: service_started
+    ports:
+      - "9005:9005"
     networks:
       monitoring-network:
         ipv4_address: 172.32.0.105
@@ -479,7 +510,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 8.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8100
-      DRIVER_CENTRAL_HTTP_URL: http://172.33.0.20:8000
+      DRIVER_CENTRAL_HTTP_URL: https://172.33.0.20:8000
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -506,7 +537,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 12.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8101
-      DRIVER_CENTRAL_HTTP_URL: http://172.33.0.20:8000
+      DRIVER_CENTRAL_HTTP_URL: https://172.33.0.20:8000
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -533,7 +564,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 20.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8102
-      DRIVER_CENTRAL_HTTP_URL: http://172.33.0.20:8000
+      DRIVER_CENTRAL_HTTP_URL: https://172.33.0.20:8000
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -560,7 +591,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 15.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8103
-      DRIVER_CENTRAL_HTTP_URL: http://172.33.0.20:8000
+      DRIVER_CENTRAL_HTTP_URL: https://172.33.0.20:8000
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -587,7 +618,7 @@ services:
       DRIVER_REQUEST_INTERVAL: 10.0
       DRIVER_LOG_LEVEL: INFO
       DRIVER_DASHBOARD_PORT: 8104
-      DRIVER_CENTRAL_HTTP_URL: http://172.33.0.20:8000
+      DRIVER_CENTRAL_HTTP_URL: https://172.33.0.20:8000
       DRIVER_AUTO_RUN_REQUESTS: "false"
     volumes:
       - ./requests.txt:/app/requests.txt:ro
@@ -657,4 +688,5 @@ networks:
 
 volumes:
   kafka-data:
-  registry-data:
+  data:
+  certs:

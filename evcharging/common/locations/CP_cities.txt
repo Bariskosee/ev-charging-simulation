@@ -1,5 +1,5 @@
 CP-001,Istanbul
-CP-002,Ankara
+CP-002,Zakopane
 CP-003,Poznan
 CP-004,Trabzon
 CP-005,Madrid

@@ -51,7 +51,7 @@ class CPMonitorConfig(BaseSettings):
     
     cp_id: str = Field(..., description="Charging Point ID")
     location: str = Field(default="Unknown", description="CP location (city/address)")
-    location_file: str = Field(default="/app/CP_cities.txt", description="File for CP locations")
+    location_file: str = Field(default="/app/locations/CP_cities.txt", description="File for CP locations")
     cp_e_host: str = Field(default="localhost", description="CP Engine host")
     cp_e_port: int = Field(default=8001, description="CP Engine port")
     cp_api_port: int = Field(default=9001, description="CP Monitor API port")
@@ -96,7 +96,7 @@ class DriverConfig(BaseSettings):
     request_interval: float = Field(default=4.0, description="Interval between requests (seconds)")
     log_level: str = Field(default="INFO", description="Logging level")
     dashboard_port: int = Field(default=8100, description="HTTP dashboard port")
-    central_https_url: str = Field(default="https://localhost:8000", description="EV Central HTTP base URL")
+    central_http_url: str = Field(default="https://localhost:8000", description="EV Central HTTP base URL")
     auto_run_requests: bool = Field(default=False, description="Automatically run scripted requests on startup")
     
     model_config = SettingsConfigDict(
@@ -146,7 +146,7 @@ class WeatherConfig(BaseSettings):
     openweather_api_key: str = Field(default="X-OpenWeather-API-Key", description="API key to access OpenWeather")
     central_https_url: str = Field(default="https://localhost:8000", description="EV Central HTTP base URL")
     poll_interval: int = Field(default=4, description="Interval in which the EV_W poll data from OpenWeather")
-    city_file: str = Field(default="/app/evcharging/common/CP_cities.txt", description="File in which are kept the cities")
+    city_file: str = Field(default="/app/evcharging/common/locations/CP_cities.txt", description="File in which are kept the cities")
     log_level: str = Field(default="INFO", description="Logging level")
 
     model_config = SettingsConfigDict(

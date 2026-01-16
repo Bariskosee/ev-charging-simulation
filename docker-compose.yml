@@ -145,7 +145,6 @@ services:
       - data:/data
       # Mount certificates if TLS is enabled
       - ./certs:/certs
-      - ./certs:/certs
     networks:
       - evcharging-network
     restart: unless-stopped
@@ -326,7 +325,7 @@ services:
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_001_ENCRYPTION_KEY: ${EV_CP_001_ENCRYPTION_KEY:-}
     volumes:
-      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       - ev-central
       - ev-cp-e-1
@@ -355,7 +354,7 @@ services:
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_002_ENCRYPTION_KEY: ${EV_CP_002_ENCRYPTION_KEY:-}
     volumes:
-      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       - ev-central
       - ev-cp-e-2
@@ -384,7 +383,7 @@ services:
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_003_ENCRYPTION_KEY: ${EV_CP_003_ENCRYPTION_KEY:-}
     volumes:
-      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       - ev-central
       - ev-cp-e-3
@@ -413,7 +412,7 @@ services:
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_004_ENCRYPTION_KEY: ${EV_CP_004_ENCRYPTION_KEY:-}
     volumes:
-      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       - ev-central
       - ev-cp-e-4
@@ -442,7 +441,7 @@ services:
       CP_MONITOR_REGISTRY_ADMIN_API_KEY: ${REGISTRY_ADMIN_API_KEY}
       EV_CP_005_ENCRYPTION_KEY: ${EV_CP_005_ENCRYPTION_KEY:-}
     volumes:
-      - ./evcharging/common/CP_cities.txt:/app/CP_cities.txt
+      - ./evcharging/common/locations:/app/locations
     depends_on:
       - ev-central
       - ev-cp-e-5

@@ -62,7 +62,7 @@ class EVDriver:
         self._poll_task: Optional[asyncio.Task] = None
         self._dashboard_task: Optional[asyncio.Task] = None
         self._running = False
-        self.central_https_url = config.central_https_url.rstrip("/")
+        self.central_http_url = config.central_http_url.rstrip("/")
         self.dashboard_port = config.dashboard_port
         self.ticket_file = f"driver_tickets/driver_{self.driver_id}_tickets.txt"
         
@@ -327,7 +327,7 @@ class EVDriver:
         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
             while self._running:
                 try:
-                    resp = await client.get(f"{self.central_https_url}/cp")
+                    resp = await client.get(f"{self.central_http_url}/cp")
                     resp.raise_for_status()
                     payload = resp.json()
                     await self._update_charging_points(payload.get("charging_points", []))
@@ -374,7 +374,8 @@ class EVDriver:
                     # Log warning only on first failure or every 10th failure
                     if self._consecutive_failures == 1:
                         logger.warning(
-                            f"Driver: Central {self.central_https_url} dashboard unreachable - {exc}. "
+                            f"Driver: Central {self.central_http_url} dashboard unreachable - "
+                            f"{type(exc).__name__}: {exc}. "
                             "CP status display may be stale. Charging operations continue via Kafka."
                         )
                         # Report error to error manager for display
@@ -397,7 +398,7 @@ class EVDriver:
                                     )
                                 )
                     elif self._consecutive_failures % 10 == 0:
-                        logger.debug(f"Driver: Central {self.central_https_url} still unreachable ({self._consecutive_failures} failures)")
+                        logger.debug(f"Driver: Central {self.central_http_url} still unreachable ({self._consecutive_failures} failures)")
                         
                 await asyncio.sleep(1.5)
         logger.info("Driver: central polling loop stopped")
@@ -730,7 +731,7 @@ class EVDriver:
                     try:
                         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                             response = await client.post(
-                                f"{self.central_https_url}/stop-session",
+                                f"{self.central_http_url}/stop-session",
                                 json={
                                     "cp_id": summary.cp_id,
                                     "driver_id": self.driver_id,
@@ -767,7 +768,7 @@ async def main():
     parser.add_argument("--requests-file", type=str, help="File with CP IDs to request")
     parser.add_argument("--request-interval", type=float, help="Interval between requests (seconds)")
     parser.add_argument("--log-level", type=str, help="Log level")
-    parser.add_argument("--central-https-url", type=str, help="URL to connect to the Central")
+    parser.add_argument("--central-http-url", type=str, help="URL to connect to the Central")
     
     args = parser.parse_args()
     
